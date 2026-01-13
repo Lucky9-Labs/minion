@@ -236,6 +236,7 @@ export class CameraController {
 
   /**
    * Calculate optimal camera position for conversation framing
+   * MMO-style: over-the-shoulder view with wizard in left foreground, minion in right background
    */
   private calculateConversationCamera(framing: ConversationFraming): {
     position: THREE.Vector3;
@@ -243,30 +244,27 @@ export class CameraController {
   } {
     const { minionPosition, wizardPosition } = framing;
 
-    // Target is the midpoint between wizard and minion, slightly elevated
-    const target = new THREE.Vector3()
-      .addVectors(minionPosition, wizardPosition)
-      .multiplyScalar(0.5);
-    target.y = Math.max(minionPosition.y, wizardPosition.y) + 0.5;
-
-    // Camera should be positioned to show:
-    // - Wizard on left (back to camera)
-    // - Minion on right (facing camera)
+    // Target looks at the minion (slightly above their head)
+    const target = minionPosition.clone();
+    target.y += 0.8; // Look at minion's upper body/head
 
     // Direction from wizard to minion
     const wizardToMinion = new THREE.Vector3()
       .subVectors(minionPosition, wizardPosition)
       .normalize();
 
-    // Camera position: perpendicular to the wizard-minion line, facing both
-    // We want to be slightly behind and to the side of the midpoint
-    const perpendicular = new THREE.Vector3(-wizardToMinion.z, 0, wizardToMinion.x);
+    // Camera is positioned behind and to the left of the wizard
+    // Wider angle for better framing of both characters
+    const leftOffset = new THREE.Vector3(-wizardToMinion.z, 0, wizardToMinion.x)
+      .normalize()
+      .multiplyScalar(3.0); // More offset to the left for wider angle
 
-    // Camera is perpendicular to the conversation line, at conversation distance
-    let idealPosition = new THREE.Vector3()
-      .copy(target)
-      .add(perpendicular.clone().multiplyScalar(this.config.conversationDistance));
-    idealPosition.y = target.y + this.config.conversationHeight;
+    const backOffset = wizardToMinion.clone().multiplyScalar(-4.0); // Further behind wizard
+
+    let idealPosition = wizardPosition.clone()
+      .add(backOffset)
+      .add(leftOffset);
+    idealPosition.y = wizardPosition.y + this.config.conversationHeight + 0.8;
 
     // Apply spring arm collision avoidance
     const safePosition = this.springArm.calculateSafePosition(target, idealPosition);

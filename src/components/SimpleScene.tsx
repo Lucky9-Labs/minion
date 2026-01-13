@@ -30,6 +30,7 @@ interface MinionSceneData {
   torchId: string; // ID for this minion's torch
   reactionIndicator: ReactionIndicator;
   personality: 'friendly' | 'cautious' | 'grumpy';
+  selectionCrystal: THREE.Mesh; // Sims-style floating crystal above selected minion
 }
 
 // Building bounds for collision and inside detection
@@ -238,24 +239,45 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     }
   }, []);
 
-  // Calculate wizard position for conversation (left of minion from camera's view)
+  // Calculate wizard position for conversation (in foreground, between camera and minion)
+  // MMO-style: wizard in left foreground facing minion, minion in right background facing camera
   const calculateWizardPosition = useCallback((minionPos: THREE.Vector3, cameraPos: THREE.Vector3): THREE.Vector3 => {
     // Direction from camera to minion
     const cameraToMinion = new THREE.Vector3()
       .subVectors(minionPos, cameraPos)
       .normalize();
 
-    // Left offset (perpendicular to camera direction)
-    const leftOffset = new THREE.Vector3()
-      .crossVectors(new THREE.Vector3(0, 1, 0), cameraToMinion)
+    // Wizard is positioned between camera and minion, offset to the right
+    // This puts wizard in left foreground from camera's perspective
+    const rightOffset = new THREE.Vector3()
+      .crossVectors(cameraToMinion, new THREE.Vector3(0, 1, 0))
       .normalize()
-      .multiplyScalar(2.5);
+      .multiplyScalar(1.5); // Offset to the right
 
-    // Position wizard to the left of minion
-    const wizardPos = minionPos.clone().add(leftOffset);
+    // Position wizard further from minion for better framing
+    const towardCamera = cameraToMinion.clone().multiplyScalar(-4.5); // 4.5 units toward camera (further from minion)
+    const wizardPos = minionPos.clone().add(towardCamera).add(rightOffset);
     wizardPos.y = minionPos.y; // Same height as minion
 
     return wizardPos;
+  }, []);
+
+  // Create a Sims-style selection crystal (floating diamond above character)
+  const createSelectionCrystal = useCallback((): THREE.Mesh => {
+    const geometry = new THREE.OctahedronGeometry(0.3, 0);
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x00ff88,
+      emissive: 0x00ff88,
+      emissiveIntensity: 0.5,
+      transparent: true,
+      opacity: 0.8,
+      metalness: 0.3,
+      roughness: 0.2,
+    });
+    const crystal = new THREE.Mesh(geometry, material);
+    crystal.visible = false; // Hidden by default
+    crystal.position.y = 3.5; // Float above minion head
+    return crystal;
   }, []);
 
   useEffect(() => {
@@ -361,6 +383,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     const buildingY = terrainBuilder.getHeightAt(0, 0);
     buildingRefs.root.position.y = buildingY;
     scene.add(buildingRefs.root);
+
+    // Update floorY to include terrain height
+    buildingBoundsRef.current!.floorY = buildingY + 0.3;
 
     // Store interior lights for day/night control
     interiorLightsRef.current = buildingRefs.allLights;
@@ -481,9 +506,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     // Helper function to get terrain height at position (or building floor if inside)
     function getGroundHeight(x: number, z: number): number {
       if (isInsideBuilding(x, z)) {
-        return buildingBoundsRef.current!.floorY + 0.5; // Standing height on floor
+        return buildingBoundsRef.current!.floorY + 0.1; // Standing height on floor
       }
-      return terrainBuilder.getHeightAt(x, z) + 0.5; // Standing height on terrain
+      return terrainBuilder.getHeightAt(x, z) + 0.1; // Standing height on terrain
     }
 
     // Helper function to select new destination
@@ -699,6 +724,12 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
             data.currentPosition.z
           );
         }
+
+        // Animate selection crystal (bob and rotate)
+        if (data.selectionCrystal.visible) {
+          data.selectionCrystal.rotation.y = elapsedTime * 2;
+          data.selectionCrystal.position.y = 3.5 + Math.sin(elapsedTime * 3) * 0.15;
+        }
       });
 
       // Update wall culler with character-inside state
@@ -773,9 +804,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     function getGroundHeight(x: number, z: number): number {
       const bounds = buildingBoundsRef.current;
       if (bounds && x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ) {
-        return bounds.floorY + 0.5;
+        return bounds.floorY + 0.1;
       }
-      return terrain.getHeightAt(x, z) + 0.5;
+      return terrain.getHeightAt(x, z) + 0.1;
     }
 
     // Available minion species (not wizard/witch - those are player characters)
@@ -840,6 +871,10 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         const reactionIndicator = new ReactionIndicator();
         instance.mesh.add(reactionIndicator.getGroup());
 
+        // Create Sims-style selection crystal
+        const selectionCrystal = createSelectionCrystal();
+        instance.mesh.add(selectionCrystal);
+
         // Assign personality based on traits or random
         const personalities: Array<'friendly' | 'cautious' | 'grumpy'> = ['friendly', 'cautious', 'grumpy'];
         const personality = personalities[index % personalities.length];
@@ -856,6 +891,7 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
           torchId,
           reactionIndicator,
           personality,
+          selectionCrystal,
         });
       }
     });
@@ -874,17 +910,10 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       }
     });
 
-    // Update selected state (add glow to selected)
+    // Update selected state (show/hide Sims-style crystal)
     currentMinions.forEach((data) => {
       const isSelected = data.minionId === selectedMinionId;
-      data.instance.mesh.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
-          child.material.emissiveIntensity = isSelected ? 0.3 : 0;
-          if (isSelected && child.material.emissive) {
-            child.material.emissive.setHex(0xffff00);
-          }
-        }
-      });
+      data.selectionCrystal.visible = isSelected;
     });
   }, [hasHydrated, minions, selectedMinionId]);
 
@@ -920,14 +949,13 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       return () => clearTimeout(timer);
     }
 
-    // When entering conversation completes, set phase to active
-    if (conversation.phase === 'entering' && !cameraControllerRef.current.isTransitioning()) {
-      // Camera might still be transitioning, wait a bit
+    // When entering conversation, wait for camera transition to complete
+    if (conversation.phase === 'entering') {
+      // Set phase to active after transition duration completes
+      // Don't check isTransitioning() since camera might be in edge case position
       const timer = setTimeout(() => {
-        if (!cameraControllerRef.current?.isTransitioning()) {
-          setConversationPhase('active');
-        }
-      }, 900); // Slightly after transition duration
+        setConversationPhase('active');
+      }, 900); // Slightly after transition duration (0.8s)
 
       return () => clearTimeout(timer);
     }

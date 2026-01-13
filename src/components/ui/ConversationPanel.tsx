@@ -50,7 +50,7 @@ export function ConversationPanel({ minionName }: ConversationPanelProps) {
               <span className="text-slate-400 italic">*approaches*</span>
             )}
             {conversation.phase === 'active' && (
-              <span>Hello, master! What can I help you with today?</span>
+              <span>Oh! What brings you here?</span>
             )}
             {conversation.phase === 'exiting' && (
               <span className="text-slate-400 italic">*waves goodbye*</span>
