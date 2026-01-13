@@ -9,6 +9,7 @@ import type { MinionInstance } from '@/lib/minion';
 import { CameraRelativeWallCuller } from '@/lib/tower';
 import { ContinuousTerrainBuilder, DEFAULT_CONTINUOUS_CONFIG } from '@/lib/terrain';
 import type { ExclusionZone } from '@/lib/terrain';
+import { createVillagePaths } from '@/lib/terrain/VillagePaths';
 import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
 import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
@@ -17,6 +18,12 @@ import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall } from '@/lib
 import type { ReactionType } from '@/lib/effects';
 import { IslandEdgeBuilder } from '@/lib/terrain';
 import { WizardBehavior } from '@/lib/wizard';
+import { useProjectStore } from '@/store/projectStore';
+import {
+  createProjectBuilding,
+  setProjectBuildingSelected,
+  type ProjectBuildingMesh,
+} from '@/lib/projectBuildings';
 import { FirstPersonHands } from '@/lib/FirstPersonHands';
 
 // Minion data for tracking position and movement
@@ -71,9 +78,11 @@ const CAMERA_POLAR_ANGLE = Math.PI / 4; // 45 degrees from vertical
 
 interface SimpleSceneProps {
   onMinionClick?: (minionId: string) => void;
+  onProjectClick?: (projectId: string) => void;
+  selectedProjectId?: string | null;
 }
 
-export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
+export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }: SimpleSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -81,6 +90,8 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const controlsRef = useRef<OrbitControls | null>(null);
   const cameraControllerRef = useRef<CameraController | null>(null);
   const minionsRef = useRef<Map<string, MinionSceneData>>(new Map());
+  const projectBuildingsRef = useRef<Map<string, ProjectBuildingMesh>>(new Map());
+  const villagePathsRef = useRef<THREE.Group | null>(null);
   const wizardRef = useRef<MinionInstance | null>(null);
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2());
@@ -112,6 +123,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const setConversationPhase = useGameStore((state) => state.setConversationPhase);
   const transitionToMinion = useGameStore((state) => state.transitionToMinion);
 
+  // Project store
+  const { projects, scanProjects } = useProjectStore();
+
   // Handle click on canvas
   const handleClick = useCallback((event: MouseEvent) => {
     if (!containerRef.current || !sceneRef.current) return;
@@ -125,6 +139,26 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
     raycasterRef.current.setFromCamera(mouseRef.current, camera);
+
+    // Check for project building clicks first
+    const buildingMeshes: THREE.Object3D[] = [];
+    projectBuildingsRef.current.forEach((building) => {
+      buildingMeshes.push(building.group);
+    });
+
+    const buildingIntersects = raycasterRef.current.intersectObjects(buildingMeshes, true);
+    if (buildingIntersects.length > 0) {
+      let clickedObject = buildingIntersects[0].object;
+      while (clickedObject.parent && !clickedObject.userData.projectId) {
+        clickedObject = clickedObject.parent;
+      }
+
+      const projectId = clickedObject.userData.projectId;
+      if (projectId) {
+        onProjectClick?.(projectId);
+        return;
+      }
+    }
 
     // Check for minion clicks
     const minionMeshes: THREE.Object3D[] = [];
@@ -251,7 +285,7 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         return;
       }
     }
-  }, [setSelectedMinion, onMinionClick, enterConversation, transitionToMinion]);
+  }, [setSelectedMinion, onMinionClick, onProjectClick, enterConversation, transitionToMinion]);
 
   // Get reaction based on minion personality
   const getReactionForPersonality = useCallback((personality: 'friendly' | 'cautious' | 'grumpy'): ReactionType => {
@@ -477,30 +511,30 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     // Store interior lights for day/night control
     interiorLightsRef.current = buildingRefs.allLights;
 
-    // Camera-relative wall culler - register walls from all rooms
-    const wallCuller = new CameraRelativeWallCuller(camera);
-
-    // Register walls and roofs from each room for culling
-    buildingRefs.rooms.forEach((roomRef, roomId) => {
-      // Register each wall direction
-      for (const dir of ['north', 'south', 'east', 'west'] as const) {
-        const wallGroup = roomRef.walls[dir];
-        if (wallGroup) {
-          // Find the main wall mesh in the group
-          wallGroup.traverse((child) => {
-            if (child instanceof THREE.Mesh && child.userData.wallFace === dir) {
-              wallCuller.registerWall(dir, child);
-            }
-          });
-        }
-      }
-
-      // Register roof for transparency when characters are inside
-      if (roomRef.roof) {
-        wallCuller.registerRoof(roomRef.roof);
-      }
-    });
-    wallCullerRef.current = wallCuller;
+    // Camera-relative wall culler - DISABLED for now (confusing behavior)
+    // const wallCuller = new CameraRelativeWallCuller(camera);
+    //
+    // // Register walls and roofs from each room for culling
+    // buildingRefs.rooms.forEach((roomRef, roomId) => {
+    //   // Register each wall direction
+    //   for (const dir of ['north', 'south', 'east', 'west'] as const) {
+    //     const wallGroup = roomRef.walls[dir];
+    //     if (wallGroup) {
+    //       // Find the main wall mesh in the group
+    //       wallGroup.traverse((child) => {
+    //         if (child instanceof THREE.Mesh && child.userData.wallFace === dir) {
+    //           wallCuller.registerWall(dir, child);
+    //         }
+    //       });
+    //     }
+    //   }
+    //
+    //   // Register roof for transparency when characters are inside
+    //   if (roomRef.roof) {
+    //     wallCuller.registerRoof(roomRef.roof);
+    //   }
+    // });
+    // wallCullerRef.current = wallCuller;
 
     // === CLOUD SHADOWS (drifting across terrain for diffuse lighting) ===
     const cloudShadows: CloudShadowData[] = [];
@@ -1276,11 +1310,11 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         }
       });
 
-      // Update wall culler with character-inside state
-      if (wallCullerRef.current) {
-        wallCullerRef.current.setCharacterInside(anyCharacterInside);
-        wallCullerRef.current.update(deltaTime);
-      }
+      // Update wall culler with character-inside state - DISABLED
+      // if (wallCullerRef.current) {
+      //   wallCullerRef.current.setCharacterInside(anyCharacterInside);
+      //   wallCullerRef.current.update(deltaTime);
+      // }
 
       // Update camera controller
       cameraController.update(deltaTime);
@@ -1350,6 +1384,27 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         scene.remove(cloud.mesh);
       }
       cloudShadowsRef.current = [];
+      // Cleanup project buildings
+      projectBuildingsRef.current.forEach((building) => {
+        scene.remove(building.group);
+        building.dispose();
+      });
+      projectBuildingsRef.current.clear();
+      // Cleanup village paths
+      if (villagePathsRef.current) {
+        scene.remove(villagePathsRef.current);
+        villagePathsRef.current.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            if (Array.isArray(child.material)) {
+              child.material.forEach((m) => m.dispose());
+            } else {
+              child.material.dispose();
+            }
+          }
+        });
+        villagePathsRef.current = null;
+      }
       if (container && renderer.domElement.parentNode === container) {
         container.removeChild(renderer.domElement);
       }
@@ -1524,6 +1579,94 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       return () => clearTimeout(timer);
     }
   }, [conversation.phase, setConversationPhase]);
+
+  // Initial project scan and polling
+  useEffect(() => {
+    scanProjects();
+    const interval = setInterval(() => {
+      scanProjects();
+    }, 60000); // Poll every minute
+    return () => clearInterval(interval);
+  }, [scanProjects]);
+
+  // Sync project buildings with scene
+  useEffect(() => {
+    if (!sceneRef.current || !terrainBuilderRef.current) return;
+
+    const scene = sceneRef.current;
+    const terrain = terrainBuilderRef.current;
+    const currentBuildings = projectBuildingsRef.current;
+
+    // Track if we need to rebuild village paths
+    let buildingsChanged = false;
+
+    // Add new project buildings
+    for (const project of projects) {
+      if (!currentBuildings.has(project.id)) {
+        // Calculate position - use stored position from project or generate one
+        const pos = new THREE.Vector3(
+          project.building.position.x,
+          terrain.getHeightAt(project.building.position.x, project.building.position.z),
+          project.building.position.z
+        );
+
+        const building = createProjectBuilding(project, pos);
+        scene.add(building.group);
+        currentBuildings.set(project.id, building);
+        buildingsChanged = true;
+      }
+    }
+
+    // Remove buildings that no longer exist
+    currentBuildings.forEach((building, projectId) => {
+      if (!projects.find((p) => p.id === projectId)) {
+        scene.remove(building.group);
+        building.dispose();
+        currentBuildings.delete(projectId);
+        buildingsChanged = true;
+      }
+    });
+
+    // Rebuild village paths if buildings changed
+    if (buildingsChanged || !villagePathsRef.current) {
+      // Remove old paths
+      if (villagePathsRef.current) {
+        scene.remove(villagePathsRef.current);
+        villagePathsRef.current.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.geometry.dispose();
+            if (Array.isArray(child.material)) {
+              child.material.forEach((m) => m.dispose());
+            } else {
+              child.material.dispose();
+            }
+          }
+        });
+      }
+
+      // Create new village paths based on building positions
+      const buildingPositions = projects.map((p) => ({
+        x: p.building.position.x,
+        z: p.building.position.z,
+      }));
+
+      if (buildingPositions.length > 0) {
+        const villagePaths = createVillagePaths(
+          buildingPositions,
+          (x, z) => terrain.getHeightAt(x, z)
+        );
+        scene.add(villagePaths);
+        villagePathsRef.current = villagePaths;
+      }
+    }
+  }, [projects]);
+
+  // Update selected project building highlight
+  useEffect(() => {
+    projectBuildingsRef.current.forEach((building, projectId) => {
+      setProjectBuildingSelected(building, projectId === selectedProjectId);
+    });
+  }, [selectedProjectId]);
 
   // Expose exit conversation for UI components
   const handleLeaveConversation = useCallback(() => {
