@@ -166,6 +166,13 @@ export class CameraController {
   }
 
   /**
+   * Get the perspective camera (for first-person/conversation modes)
+   */
+  getPerspCamera(): THREE.PerspectiveCamera {
+    return this.perspCamera;
+  }
+
+  /**
    * Get current camera mode
    */
   getMode(): CameraMode {

@@ -12,8 +12,9 @@ export interface FirstPersonHandsConfig {
 }
 
 export const DEFAULT_HANDS_CONFIG: FirstPersonHandsConfig = {
-  positionOffset: new THREE.Vector3(0.35, -0.35, -0.6),
-  baseRotation: new THREE.Euler(0.3, -0.2, 0.1),
+  // Position in lower-right of view, staff tilted forward
+  positionOffset: new THREE.Vector3(0.3, -0.4, -0.6),
+  baseRotation: new THREE.Euler(-0.7, -0.2, 0.1),
   swayIntensity: 0.15,
   bobIntensity: 0.03,
 };
@@ -26,7 +27,8 @@ export class FirstPersonHands {
   private group: THREE.Group;
   private staff: THREE.Group;
   private orbLight: THREE.PointLight;
-  private orbGlow: THREE.Mesh;
+  private floatingGem: THREE.Mesh;
+  private gemGlow: THREE.Mesh;
 
   // Animation state
   private targetSwayX: number = 0;
@@ -35,6 +37,7 @@ export class FirstPersonHands {
   private currentSwayY: number = 0;
   private bobPhase: number = 0;
   private bobAmount: number = 0;
+  private gemRotation: number = 0;
 
   constructor(config: Partial<FirstPersonHandsConfig> = {}) {
     this.config = {
@@ -48,14 +51,10 @@ export class FirstPersonHands {
     this.staff = this.createStaff();
     this.group.add(this.staff);
 
-    // Add ambient orb light
-    this.orbLight = new THREE.PointLight(0x6366f1, 0.5, 3);
-    this.orbLight.position.set(0, 0.9, 0);
+    // Add ambient gem light
+    this.orbLight = new THREE.PointLight(0x9966ff, 0.8, 4);
+    this.orbLight.position.set(0, 0.55, 0);
     this.staff.add(this.orbLight);
-
-    // Create glow effect
-    this.orbGlow = this.createOrbGlow();
-    this.staff.add(this.orbGlow);
 
     // Apply base position and rotation
     this.group.position.copy(this.config.positionOffset);
@@ -65,65 +64,82 @@ export class FirstPersonHands {
   private createStaff(): THREE.Group {
     const staffGroup = new THREE.Group();
 
-    // Staff shaft - wooden texture appearance
-    const shaftGeometry = new THREE.CylinderGeometry(0.025, 0.035, 1.0, 8);
+    // Thin elegant staff shaft - ends at the gem
+    const shaftGeometry = new THREE.CylinderGeometry(0.015, 0.022, 0.65, 6);
     const shaftMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4a3728,
-      roughness: 0.8,
-      metalness: 0.1,
+      color: 0x2a1a0a,
+      roughness: 0.6,
+      metalness: 0.2,
     });
     const shaft = new THREE.Mesh(shaftGeometry, shaftMaterial);
-    shaft.position.y = 0.4;
+    shaft.position.y = 0.1;
     staffGroup.add(shaft);
 
-    // Decorative rings
-    const ringGeometry = new THREE.TorusGeometry(0.04, 0.008, 8, 16);
+    // Single decorative gold ring near top
+    const ringGeometry = new THREE.TorusGeometry(0.025, 0.005, 6, 12);
     const ringMaterial = new THREE.MeshStandardMaterial({
-      color: 0xc9a227,
+      color: 0xffd700,
+      roughness: 0.2,
+      metalness: 0.9,
+      emissive: 0x553300,
+      emissiveIntensity: 0.2,
+    });
+    const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = 0.38;
+    staffGroup.add(ring);
+
+    // Prongs to cradle the gem (3 curved prongs)
+    const prongMaterial = new THREE.MeshStandardMaterial({
+      color: 0xffd700,
       roughness: 0.3,
       metalness: 0.8,
     });
+    for (let i = 0; i < 3; i++) {
+      const angle = (i / 3) * Math.PI * 2;
+      const prongGeometry = new THREE.CylinderGeometry(0.004, 0.006, 0.12, 4);
+      const prong = new THREE.Mesh(prongGeometry, prongMaterial);
+      prong.position.set(
+        Math.cos(angle) * 0.02,
+        0.44,
+        Math.sin(angle) * 0.02
+      );
+      prong.rotation.x = Math.cos(angle) * 0.4;
+      prong.rotation.z = -Math.sin(angle) * 0.4;
+      staffGroup.add(prong);
+    }
 
-    const ring1 = new THREE.Mesh(ringGeometry, ringMaterial);
-    ring1.rotation.x = Math.PI / 2;
-    ring1.position.y = 0.85;
-    staffGroup.add(ring1);
-
-    const ring2 = new THREE.Mesh(ringGeometry, ringMaterial);
-    ring2.rotation.x = Math.PI / 2;
-    ring2.position.y = 0.75;
-    staffGroup.add(ring2);
-
-    // Crystal orb at top
-    const orbGeometry = new THREE.SphereGeometry(0.08, 16, 16);
-    const orbMaterial = new THREE.MeshStandardMaterial({
-      color: 0x6366f1,
-      emissive: 0x4338ca,
-      emissiveIntensity: 0.8,
-      roughness: 0.2,
-      metalness: 0.3,
+    // Floating gem (octahedron for crystal look) - positioned lower for visibility
+    const gemGeometry = new THREE.OctahedronGeometry(0.06, 0);
+    const gemMaterial = new THREE.MeshStandardMaterial({
+      color: 0x9966ff,
+      emissive: 0x6633cc,
+      emissiveIntensity: 1.0,
+      roughness: 0.1,
+      metalness: 0.4,
       transparent: true,
       opacity: 0.9,
     });
-    const orb = new THREE.Mesh(orbGeometry, orbMaterial);
-    orb.position.y = 0.95;
-    staffGroup.add(orb);
+    this.floatingGem = new THREE.Mesh(gemGeometry, gemMaterial);
+    this.floatingGem.position.y = 0.55;
+    staffGroup.add(this.floatingGem);
 
-    // Inner orb glow
-    const innerOrbGeometry = new THREE.SphereGeometry(0.05, 12, 12);
-    const innerOrbMaterial = new THREE.MeshBasicMaterial({
-      color: 0x818cf8,
+    // Gem glow effect
+    const glowGeometry = new THREE.SphereGeometry(0.12, 12, 12);
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: 0x9966ff,
       transparent: true,
-      opacity: 0.6,
+      opacity: 0.2,
+      side: THREE.BackSide,
     });
-    const innerOrb = new THREE.Mesh(innerOrbGeometry, innerOrbMaterial);
-    innerOrb.position.y = 0.95;
-    staffGroup.add(innerOrb);
+    this.gemGlow = new THREE.Mesh(glowGeometry, glowMaterial);
+    this.gemGlow.position.y = 0.55;
+    staffGroup.add(this.gemGlow);
 
-    // Simple hand (low poly stylized)
+    // Simple blob hand (just a rounded shape gripping the staff)
     const handGroup = this.createHand();
-    handGroup.position.set(0.02, 0.15, 0.03);
-    handGroup.rotation.set(0.2, 0.3, -0.1);
+    handGroup.position.set(0.01, 0.12, 0.02);
+    handGroup.rotation.set(0.1, 0.2, -0.05);
     staffGroup.add(handGroup);
 
     return staffGroup;
@@ -132,59 +148,30 @@ export class FirstPersonHands {
   private createHand(): THREE.Group {
     const hand = new THREE.Group();
 
-    // Palm
-    const palmGeometry = new THREE.BoxGeometry(0.06, 0.08, 0.03);
     const skinMaterial = new THREE.MeshStandardMaterial({
-      color: 0xd4a574, // Skin tone
-      roughness: 0.7,
+      color: 0xd4a574,
+      roughness: 0.8,
       metalness: 0.0,
     });
-    const palm = new THREE.Mesh(palmGeometry, skinMaterial);
-    hand.add(palm);
 
-    // Fingers (simplified as cylinders wrapping around staff)
-    const fingerGeometry = new THREE.CylinderGeometry(0.012, 0.01, 0.06, 6);
+    // Simple rounded blob for the gripping hand
+    const gripGeometry = new THREE.SphereGeometry(0.045, 8, 6);
+    const grip = new THREE.Mesh(gripGeometry, skinMaterial);
+    grip.scale.set(1.2, 0.9, 1.0);
+    hand.add(grip);
 
-    for (let i = 0; i < 4; i++) {
-      const finger = new THREE.Mesh(fingerGeometry, skinMaterial);
-      finger.position.set(-0.02 + i * 0.015, 0.05, 0.02);
-      finger.rotation.x = Math.PI / 3;
-      finger.rotation.z = -0.1 + i * 0.05;
-      hand.add(finger);
-    }
-
-    // Thumb
-    const thumb = new THREE.Mesh(fingerGeometry, skinMaterial);
-    thumb.position.set(0.04, 0.02, 0.01);
-    thumb.rotation.x = Math.PI / 4;
-    thumb.rotation.z = Math.PI / 3;
-    hand.add(thumb);
-
-    // Sleeve cuff
-    const cuffGeometry = new THREE.CylinderGeometry(0.05, 0.06, 0.08, 8);
+    // Sleeve cuff (purple robe)
+    const cuffGeometry = new THREE.CylinderGeometry(0.05, 0.065, 0.1, 8);
     const cuffMaterial = new THREE.MeshStandardMaterial({
-      color: 0x2d1b4e, // Purple robe
+      color: 0x2d1b4e,
       roughness: 0.9,
       metalness: 0.0,
     });
     const cuff = new THREE.Mesh(cuffGeometry, cuffMaterial);
-    cuff.position.set(0, -0.08, 0);
+    cuff.position.set(0, -0.07, 0);
     hand.add(cuff);
 
     return hand;
-  }
-
-  private createOrbGlow(): THREE.Mesh {
-    const glowGeometry = new THREE.SphereGeometry(0.15, 16, 16);
-    const glowMaterial = new THREE.MeshBasicMaterial({
-      color: 0x6366f1,
-      transparent: true,
-      opacity: 0.15,
-      side: THREE.BackSide,
-    });
-    const glow = new THREE.Mesh(glowGeometry, glowMaterial);
-    glow.position.y = 0.95;
-    return glow;
   }
 
   /**
@@ -238,12 +225,18 @@ export class FirstPersonHands {
       this.group.position.y = this.config.positionOffset.y + idleSway;
     }
 
-    // Orb glow pulsing
-    const pulse = 0.15 + Math.sin(elapsedTime * 2) * 0.05;
-    (this.orbGlow.material as THREE.MeshBasicMaterial).opacity = pulse;
+    // Spin the floating gem
+    this.gemRotation += deltaTime * 2.5;
+    this.floatingGem.rotation.y = this.gemRotation;
+    // Add gentle floating motion
+    this.floatingGem.position.y = 0.55 + Math.sin(elapsedTime * 2) * 0.015;
 
-    // Light intensity variation
-    this.orbLight.intensity = 0.4 + Math.sin(elapsedTime * 3) * 0.1;
+    // Gem glow pulsing
+    const pulse = 0.15 + Math.sin(elapsedTime * 2.5) * 0.08;
+    (this.gemGlow.material as THREE.MeshBasicMaterial).opacity = pulse;
+
+    // Light intensity variation synced with gem
+    this.orbLight.intensity = 0.6 + Math.sin(elapsedTime * 2.5) * 0.2;
   }
 
   /**
