@@ -75,8 +75,18 @@ interface GameStore extends GameState {
   gainXP: (amount: number) => void;
 
   // Camera mode (for first person toggle)
-  cameraMode: 'isometric' | 'conversation' | 'firstPerson';
-  setCameraMode: (mode: 'isometric' | 'conversation' | 'firstPerson') => void;
+  cameraMode: 'isometric' | 'conversation' | 'firstPerson' | 'transitioning';
+  setCameraMode: (mode: 'isometric' | 'conversation' | 'firstPerson' | 'transitioning') => void;
+
+  // View mode for rendering detail level (LOD)
+  viewMode: 'isometric' | 'firstPerson' | 'transitioning';
+  setViewMode: (mode: 'isometric' | 'firstPerson' | 'transitioning') => void;
+
+  // Interior loading state for lazy-loaded building interiors
+  loadedInteriors: string[];
+  loadInterior: (buildingId: string) => void;
+  unloadInterior: (buildingId: string) => void;
+  isInteriorLoaded: (buildingId: string) => boolean;
 
   // Reset
   resetGame: () => void;
@@ -134,6 +144,8 @@ export const useGameStore = create<GameStore>()(
       selectedMinionId: null,
       conversation: initialConversationState,
       cameraMode: 'isometric' as const,
+      viewMode: 'isometric' as const,
+      loadedInteriors: [] as string[],
 
       recruitMinion: (name, role, traits) => {
         const minion: Minion = {
@@ -440,8 +452,29 @@ export const useGameStore = create<GameStore>()(
         set({ cameraMode: mode });
       },
 
+      setViewMode: (mode) => {
+        set({ viewMode: mode });
+      },
+
+      loadInterior: (buildingId) => {
+        set((state) => {
+          if (state.loadedInteriors.includes(buildingId)) return state;
+          return { loadedInteriors: [...state.loadedInteriors, buildingId] };
+        });
+      },
+
+      unloadInterior: (buildingId) => {
+        set((state) => ({
+          loadedInteriors: state.loadedInteriors.filter((id) => id !== buildingId),
+        }));
+      },
+
+      isInteriorLoaded: (buildingId) => {
+        return get().loadedInteriors.includes(buildingId);
+      },
+
       resetGame: () => {
-        set({ ...initialState, selectedMinionId: null, conversation: initialConversationState, cameraMode: 'isometric' });
+        set({ ...initialState, selectedMinionId: null, conversation: initialConversationState, cameraMode: 'isometric', viewMode: 'isometric', loadedInteriors: [] });
       },
     }),
     {

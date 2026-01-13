@@ -3,6 +3,7 @@
 import { useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import type { BuildingStage } from '@/types/project';
+import { AnimatedDoor } from './AnimatedDoor';
 
 interface CottageBuildingProps {
   stage: BuildingStage;
@@ -10,6 +11,7 @@ interface CottageBuildingProps {
   position: [number, number, number];
   onClick?: () => void;
   isSelected?: boolean;
+  buildingId?: string;
 }
 
 export function CottageBuilding({
@@ -18,6 +20,7 @@ export function CottageBuilding({
   position,
   onClick,
   isSelected,
+  buildingId,
 }: CottageBuildingProps) {
   const groupRef = useRef<THREE.Group>(null);
   const baseHeight = 1.5;
@@ -43,10 +46,12 @@ export function CottageBuilding({
     };
 
     const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-    // Rotate so ridge runs front to back (along Z)
+    // Rotate to make it horizontal: ridge runs along Z axis (front-to-back)
     geo.rotateX(-Math.PI / 2);
-    // Center over building
-    geo.translate(0, 0, roofDepth / 2);
+    // Center the geometry
+    geo.translate(0, 0, -roofDepth / 2);
+    // Now rotate 90 degrees around Y to make ridge run along X axis (side-to-side)
+    geo.rotateY(Math.PI / 2);
 
     return geo;
   }, []);
@@ -87,7 +92,7 @@ export function CottageBuilding({
       {/* Roof - pitched/gabled style */}
       {showRoof && (
         <mesh
-          position={[0, totalHeight + 0.2, -1.1]}
+          position={[0, totalHeight + 0.2, 0]}
           geometry={roofGeometry}
           castShadow
         >
@@ -108,13 +113,20 @@ export function CottageBuilding({
         </mesh>
       )}
 
-      {/* Door */}
-      {stage !== 'planning' && (
+      {/* Door - animated when constructed, static otherwise */}
+      {stage !== 'planning' && stage === 'constructed' || stage === 'decorated' ? (
+        <AnimatedDoor
+          position={[0, 0, 0.9]}
+          width={0.6}
+          height={1.0}
+          buildingId={buildingId}
+        />
+      ) : stage !== 'planning' ? (
         <mesh position={[0, 0.5, 0.91]} castShadow>
           <boxGeometry args={[0.5, 0.8, 0.05]} />
           <meshStandardMaterial color="#5D4037" transparent opacity={opacity} />
         </mesh>
-      )}
+      ) : null}
 
       {/* Windows */}
       {stage !== 'planning' && stage !== 'foundation' && (
