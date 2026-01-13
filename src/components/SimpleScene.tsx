@@ -7,7 +7,7 @@ import { useGameStore, useHasHydrated } from '@/store/gameStore';
 import { createMinion, knightHelmetConfig, getRegisteredSpecies } from '@/lib/minion';
 import type { MinionInstance } from '@/lib/minion';
 import { CameraRelativeWallCuller } from '@/lib/tower';
-import { ContinuousTerrainBuilder, DEFAULT_CONTINUOUS_CONFIG } from '@/lib/terrain';
+import { ContinuousTerrainBuilder, DEFAULT_CONTINUOUS_CONFIG, PortalGateway } from '@/lib/terrain';
 import type { ExclusionZone } from '@/lib/terrain';
 import { createVillagePaths } from '@/lib/terrain/VillagePaths';
 import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
@@ -112,6 +112,7 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
   const waterfallRef = useRef<Waterfall | null>(null);
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
   const isFirstPersonRef = useRef<boolean>(false);
+  const portalGatewayRef = useRef<PortalGateway | null>(null);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -500,6 +501,17 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     scene.add(waterfall.getGroup());
     waterfallRef.current = waterfall;
 
+    // === PORTAL GATEWAY (at true south edge of map) ===
+    const portalZ = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2 * 0.85; // True south
+    const portalY = terrainBuilder.getHeightAt(0, portalZ);
+    const portalGateway = new PortalGateway();
+    const portalMesh = portalGateway.getMesh();
+    portalMesh.position.set(0, portalY, portalZ);
+    // Face north (toward the cottage)
+    portalMesh.rotation.y = Math.PI;
+    scene.add(portalMesh);
+    portalGatewayRef.current = portalGateway;
+
     // Position building on terrain (at center, which is flat)
     const buildingY = terrainBuilder.getHeightAt(0, 0);
     buildingRefs.root.position.y = buildingY;
@@ -720,17 +732,21 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     scene.add(orb);
 
     // === PERMANENT WIZARD (always present, the player's avatar) ===
+    // Spawn at the portal gateway (true south), facing north toward cottage
+    const spawnZ = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2 * 0.75; // Just in front of portal
+    const spawnY = terrainBuilder.getHeightAt(0, spawnZ);
     const wizardInstance = createMinion({ species: 'wizard' });
-    wizardInstance.mesh.position.set(0, buildingY + 0.5, 2); // Near cottage entrance
+    wizardInstance.mesh.position.set(0, spawnY + 0.5, spawnZ);
+    wizardInstance.mesh.rotation.y = Math.PI; // Face north (toward cottage)
     wizardInstance.mesh.userData.isWizard = true;
     wizardInstance.mesh.castShadow = true;
     scene.add(wizardInstance.mesh);
     wizardRef.current = wizardInstance;
 
-    // Wizard wandering behavior
+    // Wizard wandering behavior - home is near the cottage, not the portal
     const wizardBehavior = new WizardBehavior({
       wanderRadius: 10,
-      homePosition: new THREE.Vector3(0, buildingY + 0.5, 2),
+      homePosition: new THREE.Vector3(0, buildingY + 0.5, 2), // Near cottage entrance
       idleDurationMin: 2,
       idleDurationMax: 5,
       wanderSpeed: 1.2,
@@ -962,6 +978,10 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     // Set wizard behavior callbacks
     wizardBehavior.setCallbacks(getGroundHeight, isInsideBuilding);
 
+    // Auto-enter first person mode on startup (spawn at portal, facing cottage)
+    // We do this after a small delay to ensure everything is initialized
+    let hasAutoEnteredFirstPerson = false;
+
     // Animation loop
     let lastTime = 0;
     function animate(time: number) {
@@ -969,6 +989,34 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       const deltaTime = Math.min((time - lastTime) / 1000, 0.1);
       lastTime = time;
       const elapsedTime = time / 1000;
+
+      // Auto-enter first person mode after first frame (so everything is ready)
+      if (!hasAutoEnteredFirstPerson && elapsedTime > 0.1) {
+        hasAutoEnteredFirstPerson = true;
+        // Small timeout to let the scene settle
+        setTimeout(() => {
+          if (!cameraController.isTransitioning() && cameraController.getMode() === 'isometric') {
+            // Enter first person at spawn point, facing NORTH (toward cottage)
+            const wizard = wizardRef.current;
+            if (wizard) {
+              const wizardPos = wizard.mesh.position.clone();
+              // Face north (negative Z direction) with yaw = 0
+              // In Three.js, default camera looks toward -Z (local)
+              // yaw=0 means looking toward -Z (north in world space)
+              // yaw=PI means looking toward +Z (south)
+              cameraController.enterFirstPerson(wizardPos, 0); // yaw=0 for north
+              isFirstPersonRef.current = true;
+              useGameStore.getState().setCameraMode('firstPerson');
+              wizard.mesh.visible = false;
+              wizardBehaviorRef.current?.enterConversation();
+              if (firstPersonHandsRef.current) {
+                firstPersonHandsRef.current.setVisible(true);
+              }
+              renderer.domElement.requestPointerLock();
+            }
+          }
+        }, 100);
+      }
 
       // Update day/night cycle
       dayNightCycle.update(deltaTime);
@@ -986,6 +1034,11 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       if (waterfallRef.current) {
         waterfallRef.current.update(deltaTime);
         waterfallRef.current.setTimeOfDay(timeOfDay);
+      }
+
+      // Update portal gateway animation
+      if (portalGatewayRef.current) {
+        portalGatewayRef.current.update(deltaTime);
       }
 
       // Update interior lights based on time of day
@@ -1366,6 +1419,7 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       torchManagerRef.current?.dispose();
       skyEnvironmentRef.current?.dispose();
       waterfallRef.current?.dispose();
+      portalGatewayRef.current?.dispose();
       if (islandEdgeRef.current) {
         scene.remove(islandEdgeRef.current);
       }

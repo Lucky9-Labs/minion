@@ -268,10 +268,12 @@ export class CameraController {
     eyePosition.y += this.config.firstPerson.eyeHeight;
 
     // Calculate a target point in front of the camera based on yaw
+    // In Three.js with Euler order 'YXZ', yaw=0 faces -Z, yaw=PI faces +Z
+    // So we need: lookDir = (sin(yaw), 0, -cos(yaw)) to match the camera's forward direction
     const lookDir = new THREE.Vector3(
       Math.sin(yaw),
       0,
-      Math.cos(yaw)
+      -Math.cos(yaw)
     );
     const target = eyePosition.clone().add(lookDir.multiplyScalar(10));
 
