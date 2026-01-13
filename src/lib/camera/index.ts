@@ -3,3 +3,6 @@ export type { CameraMode, CameraControllerConfig, ConversationFraming } from './
 
 export { SpringArm } from './SpringArm';
 export type { SpringArmConfig } from './SpringArm';
+
+export { FirstPersonController, DEFAULT_FIRST_PERSON_CONFIG } from './FirstPersonController';
+export type { FirstPersonConfig } from './FirstPersonController';
