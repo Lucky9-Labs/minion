@@ -744,7 +744,7 @@ export function SimpleScene({
 
     // === PERMANENT WIZARD (always present, the player's avatar) ===
     const wizardInstance = createMinion({ species: 'wizard' });
-    wizardInstance.mesh.position.set(0, buildingY + 0.5, 2); // Near cottage entrance
+    wizardInstance.mesh.position.set(5, buildingY + 0.5, 8); // In open area outside building
     wizardInstance.mesh.userData.isWizard = true;
     wizardInstance.mesh.castShadow = true;
     scene.add(wizardInstance.mesh);
@@ -753,7 +753,7 @@ export function SimpleScene({
     // Wizard wandering behavior
     const wizardBehavior = new WizardBehavior({
       wanderRadius: 10,
-      homePosition: new THREE.Vector3(0, buildingY + 0.5, 2),
+      homePosition: new THREE.Vector3(5, buildingY + 0.5, 8),
       idleDurationMin: 2,
       idleDurationMax: 5,
       wanderSpeed: 1.2,
