@@ -91,14 +91,17 @@ export class RoomMeshBuilder {
     const centerX = (minX + maxX) / 2;
     const centerZ = (minZ + maxZ) / 2;
 
-    const geo = new THREE.BoxGeometry(width, 0.3, depth);
+    // Make floor thicker and extend below ground to eliminate gaps
+    const floorHeight = 0.5;
+    const geo = new THREE.BoxGeometry(width, floorHeight, depth);
     const mat = new THREE.MeshStandardMaterial({
       color: 0x808080,
       flatShading: true,
     });
 
     const floor = new THREE.Mesh(geo, mat);
-    floor.position.set(centerX, 0.15, centerZ);
+    // Position so top is at y=0.3 and extends to y=-0.2 (below ground)
+    floor.position.set(centerX, 0.05, centerZ);
     floor.receiveShadow = true;
 
     return floor;
@@ -168,28 +171,30 @@ export class RoomMeshBuilder {
     this.materials.set(`wall_${room.config.id}_${dir}`, wallMat);
 
     // Wall dimensions and position based on direction
+    // North/South walls extend full width + overlap to cover corners
+    // East/West walls are inset to avoid z-fighting at corners
     let wallWidth: number, wallDepth: number;
     let posX = 0, posZ = 0;
 
     switch (dir) {
       case 'north':
-        wallWidth = width;
+        wallWidth = width + wallThickness; // Extend to cover corners
         wallDepth = wallThickness;
         posZ = -depth / 2 + wallThickness / 2;
         break;
       case 'south':
-        wallWidth = width;
+        wallWidth = width + wallThickness; // Extend to cover corners
         wallDepth = wallThickness;
         posZ = depth / 2 - wallThickness / 2;
         break;
       case 'east':
         wallWidth = wallThickness;
-        wallDepth = depth;
+        wallDepth = depth - wallThickness; // Inset to meet N/S walls
         posX = width / 2 - wallThickness / 2;
         break;
       case 'west':
         wallWidth = wallThickness;
-        wallDepth = depth;
+        wallDepth = depth - wallThickness; // Inset to meet N/S walls
         posX = -width / 2 + wallThickness / 2;
         break;
     }
@@ -1113,21 +1118,48 @@ export class RoomMeshBuilder {
     const roofHeight = Math.min(width, depth) * 0.5;
     const overhang = 0.4;
 
-    // Create peaked roof shape
-    const shape = new THREE.Shape();
-    shape.moveTo(-(width / 2 + overhang), 0);
-    shape.lineTo(0, roofHeight);
-    shape.lineTo(width / 2 + overhang, 0);
-    shape.lineTo(-(width / 2 + overhang), 0);
+    // Use BufferGeometry to create a simple triangular prism roof
+    // This is more straightforward than ExtrudeGeometry
+    const roofW = width + overhang * 2;
+    const roofD = depth + overhang * 2;
 
-    const extrudeSettings = {
-      depth: depth + overhang * 2,
-      bevelEnabled: false,
-    };
+    // Create vertices for a triangular prism (ridge along X axis)
+    // Front triangle, back triangle, and connecting faces
+    const positions = new Float32Array([
+      // Front face (triangle)
+      -roofW/2, 0, roofD/2,
+      roofW/2, 0, roofD/2,
+      0, roofHeight, roofD/2,
+      // Back face (triangle)
+      roofW/2, 0, -roofD/2,
+      -roofW/2, 0, -roofD/2,
+      0, roofHeight, -roofD/2,
+      // Left slope
+      -roofW/2, 0, roofD/2,
+      0, roofHeight, roofD/2,
+      0, roofHeight, -roofD/2,
+      -roofW/2, 0, roofD/2,
+      0, roofHeight, -roofD/2,
+      -roofW/2, 0, -roofD/2,
+      // Right slope
+      roofW/2, 0, roofD/2,
+      0, roofHeight, -roofD/2,
+      0, roofHeight, roofD/2,
+      roofW/2, 0, roofD/2,
+      roofW/2, 0, -roofD/2,
+      0, roofHeight, -roofD/2,
+      // Bottom (optional, for completeness)
+      -roofW/2, 0, roofD/2,
+      -roofW/2, 0, -roofD/2,
+      roofW/2, 0, -roofD/2,
+      -roofW/2, 0, roofD/2,
+      roofW/2, 0, -roofD/2,
+      roofW/2, 0, roofD/2,
+    ]);
 
-    const roofGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-    roofGeo.rotateX(-Math.PI / 2);
-    roofGeo.translate(0, 0, (depth + overhang * 2) / 2);
+    const roofGeo = new THREE.BufferGeometry();
+    roofGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    roofGeo.computeVertexNormals();
 
     const roof = new THREE.Mesh(roofGeo, roofMat);
     roof.position.y = height + 0.3;

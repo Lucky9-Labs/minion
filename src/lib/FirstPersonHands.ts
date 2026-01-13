@@ -26,7 +26,7 @@ export class FirstPersonHands {
   private config: FirstPersonHandsConfig;
   private group: THREE.Group;
   private staff: THREE.Group;
-  private orbLight: THREE.PointLight;
+  private orbLight!: THREE.PointLight;
   private floatingGem!: THREE.Mesh;
   private gemGlow!: THREE.Mesh;
 

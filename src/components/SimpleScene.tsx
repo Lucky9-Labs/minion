@@ -10,6 +10,7 @@ import { CameraRelativeWallCuller } from '@/lib/tower';
 import { ContinuousTerrainBuilder, DEFAULT_CONTINUOUS_CONFIG, PortalGateway } from '@/lib/terrain';
 import type { ExclusionZone } from '@/lib/terrain';
 import { createVillagePaths } from '@/lib/terrain/VillagePaths';
+import { RatSystem } from '@/lib/terrain/RatSystem';
 import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
 import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
@@ -113,6 +114,7 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
   const isFirstPersonRef = useRef<boolean>(false);
   const portalGatewayRef = useRef<PortalGateway | null>(null);
+  const ratSystemRef = useRef<RatSystem | null>(null);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -715,6 +717,19 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     }
     wildlifeRef.current = wildlife;
 
+    // === RATS (on cobblestone areas near building) ===
+    const ratSystem = new RatSystem();
+    // Spawn rats around the main building area (center of map)
+    ratSystem.spawnRats({
+      center: new THREE.Vector3(0, buildingY, 0),
+      radius: 12,
+      count: 6,
+      groundY: buildingY + 0.02,
+      seed: 42,
+    });
+    scene.add(ratSystem.getGroup());
+    ratSystemRef.current = ratSystem;
+
     // === MAGIC ORB (floating above building entrance) ===
     // Small glowing orb as a beacon/waypoint
     const orbGeometry = new THREE.IcosahedronGeometry(0.5, 1);
@@ -1041,6 +1056,11 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
         portalGatewayRef.current.update(deltaTime);
       }
 
+      // Update river water animation
+      if (terrainBuilderRef.current) {
+        terrainBuilderRef.current.updateAnimations(deltaTime);
+      }
+
       // Update interior lights based on time of day
       // Night is roughly 0-0.22 and 0.78-1.0
       const isNight = timeOfDay < 0.22 || timeOfDay > 0.78;
@@ -1175,6 +1195,15 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
           animal.mesh.position.y = animal.position.y + idleBob;
           animal.mesh.rotation.x = 0;
         }
+      }
+
+      // Update rats with player position for flee behavior
+      if (ratSystemRef.current) {
+        ratSystemRef.current.update(
+          deltaTime,
+          cameraController.getCamera().position,
+          isFirstPersonRef.current
+        );
       }
 
       // === FIRST PERSON MODE UPDATE ===
@@ -1433,6 +1462,11 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
         scene.remove(animal.mesh);
       }
       wildlifeRef.current = [];
+      // Cleanup rats
+      if (ratSystemRef.current) {
+        ratSystemRef.current.dispose();
+        ratSystemRef.current = null;
+      }
       // Cleanup cloud shadows
       for (const cloud of cloudShadowsRef.current) {
         scene.remove(cloud.mesh);
