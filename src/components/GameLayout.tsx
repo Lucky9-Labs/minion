@@ -9,6 +9,7 @@ import { CharacterPanel } from './ui/CharacterPanel';
 import { ConversationPanel } from './ui/ConversationPanel';
 import { WizardProfileFrame } from './ui/WizardProfileFrame';
 import { TargetFrame } from './ui/TargetFrame';
+import { FirstPersonHUD } from './ui/FirstPersonHUD';
 import { useGameStore } from '@/store/gameStore';
 import { TOWER_FLOORS } from '@/types/game';
 import { useMinionMovement } from '@/lib/questSimulation';
@@ -25,6 +26,7 @@ export function GameLayout() {
   const activeQuestId = useGameStore((state) => state.activeQuestId);
   const conversation = useGameStore((state) => state.conversation);
   const exitConversation = useGameStore((state) => state.exitConversation);
+  const cameraMode = useGameStore((state) => state.cameraMode);
 
   // Initialize sound system
   useEffect(() => {
@@ -65,8 +67,10 @@ export function GameLayout() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  // Hide normal UI during conversation
+  // Hide normal UI during conversation or first person mode
   const inConversation = conversation.active;
+  const inFirstPerson = cameraMode === 'firstPerson';
+  const hideUI = inConversation || inFirstPerson;
 
   return (
     <div className="relative w-full h-screen overflow-hidden" style={{ background: wowTheme.colors.bgDarkest }}>
@@ -181,7 +185,7 @@ export function GameLayout() {
       </div>
 
       {/* Navigation buttons (hidden during conversation) */}
-      <div className={`absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 pointer-events-auto transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+      <div className={`absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 pointer-events-auto transition-opacity duration-300 ${hideUI ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <NavButton
           icon={<WowIcon name="minions" size="lg" color={activePanel === 'minions' ? wowTheme.colors.goldLight : wowTheme.colors.textSecondary} />}
           label="Minions"
@@ -204,7 +208,7 @@ export function GameLayout() {
       </div>
 
       {/* Side panels (hidden during conversation) */}
-      <div className={`absolute top-20 left-4 bottom-20 flex flex-col gap-4 pointer-events-none transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+      <div className={`absolute top-20 left-4 bottom-20 flex flex-col gap-4 pointer-events-none transition-opacity duration-300 ${hideUI ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div className="pointer-events-auto">
           {activePanel === 'minions' && <MinionPanel />}
           {activePanel === 'quests' && <QuestPanel />}
@@ -213,7 +217,7 @@ export function GameLayout() {
       </div>
 
       {/* Tower floors legend (hidden during conversation) */}
-      <div className={`absolute bottom-20 right-4 pointer-events-auto transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+      <div className={`absolute bottom-20 right-4 pointer-events-auto transition-opacity duration-300 ${hideUI ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div style={{
           background: `linear-gradient(180deg, ${wowTheme.colors.stoneMid} 0%, ${wowTheme.colors.stoneDark} 100%)`,
           border: `3px solid ${wowTheme.colors.stoneBorder}`,
@@ -302,7 +306,7 @@ export function GameLayout() {
       )}
 
       {/* Character panel for selected minion */}
-      {!inConversation && <CharacterPanel />}
+      {!hideUI && <CharacterPanel />}
 
       {/* Wizard profile frame (bottom-left) - hidden during conversation */}
       <div className={`transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
@@ -316,6 +320,9 @@ export function GameLayout() {
 
       {/* Conversation panel (shown during minion conversation) */}
       <ConversationPanel />
+
+      {/* First person mode HUD */}
+      <FirstPersonHUD visible={inFirstPerson} />
 
       {/* CSS animations for frames */}
       <style jsx global>{`

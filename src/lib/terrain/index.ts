@@ -29,3 +29,7 @@ export { PlotManager } from './PlotManager';
 
 // Continuous terrain (new unified ground system)
 export { ContinuousTerrainBuilder } from './ContinuousTerrainBuilder';
+
+// Island edge/cliff generation
+export { IslandEdgeBuilder, DEFAULT_ISLAND_EDGE_CONFIG } from './IslandEdgeBuilder';
+export type { IslandEdgeConfig } from './IslandEdgeBuilder';
