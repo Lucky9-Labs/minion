@@ -1,0 +1,36 @@
+{
+  "runtime": {
+    "enabled": true,
+    "portRange": [3001, 3099],
+    "devCommand": "npm run dev -- --port ${PORT}",
+    "envTransforms": {
+      "NEXT_PUBLIC_APP_URL": "http://localhost:${PORT}",
+      "NEXT_PUBLIC_API_URL": "http://localhost:${PORT}/api",
+      "NEXTAUTH_URL": "http://localhost:${PORT}",
+      "NEXTAUTH_URL_INTERNAL": "http://localhost:${PORT}"
+    }
+  },
+  "overlay": {
+    "enabled": true,
+    "position": "bottom-right"
+  },
+  "ngrok": {
+    "enabled": false,
+    "envTransforms": {
+      "NEXT_PUBLIC_APP_URL": "${NGROK_URL}",
+      "NEXTAUTH_URL": "${NGROK_URL}",
+      "QSTASH_CURRENT_SIGNING_KEY": "${QSTASH_CURRENT_SIGNING_KEY}",
+      "QSTASH_NEXT_SIGNING_KEY": "${QSTASH_NEXT_SIGNING_KEY}"
+    }
+  },
+  "docker": {
+    "enabled": false,
+    "composeFile": "docker-compose.yml",
+    "portRange": [5401, 5499],
+    "services": [],
+    "envTransforms": {
+      "DATABASE_URL": "postgres://postgres:postgres@localhost:${DB_PORT}/app",
+      "REDIS_URL": "redis://localhost:${REDIS_PORT}"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "tabColor": {
+    "type": "preset",
+    "value": "orange"
+  },
+  "paneLayout": "vertical",
+  "browserPane": {
+    "enabled": true,
+    "profile": "Browser"
+  },
+  "devServerPane": {
+    "enabled": true,
+    "command": "npm run dev -- --port ${PORT}"
+  },
+  "menuPane": {
+    "enabled": true
+  },
+  "tabTitle": {
+    "format": "[chaud] ${BRANCH}"
+  }
+}
