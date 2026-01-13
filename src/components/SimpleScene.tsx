@@ -15,6 +15,7 @@ import { DayNightCycle, TorchManager } from '@/lib/lighting';
 import { CameraController } from '@/lib/camera';
 import { TeleportEffect, MagicCircle, ReactionIndicator } from '@/lib/effects';
 import type { ReactionType } from '@/lib/effects';
+import { WizardBehavior } from '@/lib/wizard';
 
 // Minion data for tracking position and movement
 interface MinionSceneData {
@@ -70,6 +71,7 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const collisionMeshesRef = useRef<THREE.Mesh[]>([]);
   const teleportEffectRef = useRef<TeleportEffect | null>(null);
   const magicCircleRef = useRef<MagicCircle | null>(null);
+  const wizardBehaviorRef = useRef<WizardBehavior | null>(null);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -155,6 +157,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
           } else {
             // Enter conversation mode
             enterConversation(minionId);
+
+            // Tell wizard behavior we're in conversation
+            wizardBehaviorRef.current?.enterConversation();
 
             // Calculate wizard position (left of minion, facing minion)
             const wizardPos = calculateWizardPosition(minionPos, cameraControllerRef.current.getCurrentPosition());
@@ -398,8 +403,17 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     scene.add(wizardInstance.mesh);
     wizardRef.current = wizardInstance;
 
-    // Wizard state for animation
-    let wizardIdleTimer = 0;
+    // Wizard wandering behavior
+    const wizardBehavior = new WizardBehavior({
+      wanderRadius: 10,
+      homePosition: new THREE.Vector3(0, buildingY + 0.5, 2),
+      idleDurationMin: 2,
+      idleDurationMax: 5,
+      wanderSpeed: 1.2,
+    });
+    wizardBehaviorRef.current = wizardBehavior;
+
+    // Wizard state for animation (will be set by behavior callbacks)
     let wizardIsInside = false;
 
     // Collect collision meshes for camera spring arm
@@ -479,6 +493,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       data.isMoving = true;
     }
 
+    // Set wizard behavior callbacks
+    wizardBehavior.setCallbacks(getGroundHeight, isInsideBuilding);
+
     // Animation loop
     let lastTime = 0;
     function animate(time: number) {
@@ -522,16 +539,45 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       orb.rotation.y += 0.008;
       orb.position.y = buildingY + 6 + Math.sin(elapsedTime * 0.8) * 0.3;
 
-      // Animate wizard (gentle idle animation)
-      wizardInstance.animator.update(deltaTime, elapsedTime, false);
+      // Update wizard wandering behavior
+      const wizardMovement = wizardBehavior.update(
+        deltaTime,
+        wizardInstance.mesh.position
+      );
+
+      let wizardIsMoving = false;
+      if (wizardMovement && !teleportEffect.isActive()) {
+        wizardIsMoving = wizardMovement.isMoving;
+
+        // Move wizard to new position
+        wizardInstance.mesh.position.x = wizardMovement.targetPosition.x;
+        wizardInstance.mesh.position.z = wizardMovement.targetPosition.z;
+
+        // Face movement direction
+        if (wizardIsMoving) {
+          const dir = new THREE.Vector3()
+            .subVectors(wizardMovement.targetPosition, wizardInstance.mesh.position);
+          if (dir.lengthSq() > 0.001) {
+            wizardInstance.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+          }
+        }
+      }
+
+      // Animate wizard
+      wizardInstance.animator.update(deltaTime, elapsedTime, wizardIsMoving);
       wizardIsInside = isInsideBuilding(
         wizardInstance.mesh.position.x,
         wizardInstance.mesh.position.z
       );
-      // Gentle bob for wizard (only if not in conversation teleport)
+
+      // Apply bob/bounce (only if not teleporting)
       if (!teleportEffect.isActive()) {
-        const wizardBob = Math.sin(elapsedTime * 1.5) * 0.02;
-        wizardInstance.mesh.position.y = buildingY + 0.5 + wizardBob;
+        const bounce = wizardInstance.animator.getBounce();
+        const baseY = getGroundHeight(
+          wizardInstance.mesh.position.x,
+          wizardInstance.mesh.position.z
+        );
+        wizardInstance.mesh.position.y = baseY + bounce;
       }
 
       // Update teleport effects
@@ -838,6 +884,22 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     // When exiting conversation, trigger camera return animation
     if (conversation.phase === 'exiting') {
       cameraControllerRef.current.exitConversation();
+
+      // Exit wizard conversation mode and teleport back near home
+      if (wizardBehaviorRef.current && wizardRef.current && teleportEffectRef.current) {
+        const wizard = wizardRef.current;
+        const oldPos = wizard.mesh.position.clone();
+
+        // Play teleport effect
+        teleportEffectRef.current.playDisappear(oldPos);
+
+        // Teleport wizard back near cottage after delay
+        setTimeout(() => {
+          wizard.mesh.position.set(0, 0.5, 2);
+          teleportEffectRef.current?.playAppear(wizard.mesh.position);
+          wizardBehaviorRef.current?.exitConversation();
+        }, 200);
+      }
 
       // Clear conversation state after animation completes
       const timer = setTimeout(() => {
