@@ -453,3 +453,31 @@ src/
 | Exit method? | "Leave convo" button (old-school RPG) |
 | Multiple minion handling? | Smooth transition |
 | Post-conversation wizard? | Wanders around town |
+
+---
+
+## Implementation Status
+
+### Completed Features
+- [x] **CameraController** - Manages ortho↔perspective camera transitions with smooth interpolation
+- [x] **SpringArm** - Collision avoidance using multi-ray casting
+- [x] **Conversation State** - Zustand store with `enterConversation`, `exitConversation`, `transitionToMinion`
+- [x] **Conversation UI** - RPG-style panel with "Leave Conversation" button, Escape key support
+- [x] **Teleport Effects** - Particle burst with magic circle for wizard teleportation
+- [x] **Reaction Indicators** - Floating emoji-style indicators (!, anger mark, wave) based on personality
+- [x] **Wizard Wandering** - Autonomous wandering behavior when not in conversation
+
+### New Files Created
+- `src/lib/camera/CameraController.ts`
+- `src/lib/camera/SpringArm.ts`
+- `src/lib/effects/TeleportEffect.ts`
+- `src/lib/effects/ReactionIndicator.ts`
+- `src/lib/wizard/WizardBehavior.ts`
+- `src/components/ui/ConversationPanel.tsx`
+
+### Modified Files
+- `src/types/game.ts` - Added `conversing` state, `ConversationState` interface
+- `src/store/gameStore.ts` - Added conversation actions
+- `src/components/SimpleScene.tsx` - Integrated all systems
+- `src/components/GameLayout.tsx` - Added ConversationPanel, hides UI during conversation
+- `src/components/MinionEntity.tsx` - Added `conversing` color
