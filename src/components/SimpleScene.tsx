@@ -12,6 +12,10 @@ import type { ExclusionZone } from '@/lib/terrain';
 import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
 import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager } from '@/lib/lighting';
+import { CameraController } from '@/lib/camera';
+import { TeleportEffect, MagicCircle, ReactionIndicator } from '@/lib/effects';
+import type { ReactionType } from '@/lib/effects';
+import { WizardBehavior } from '@/lib/wizard';
 
 // Minion data for tracking position and movement
 interface MinionSceneData {
@@ -24,6 +28,9 @@ interface MinionSceneData {
   speed: number;
   isInsideBuilding: boolean;
   torchId: string; // ID for this minion's torch
+  reactionIndicator: ReactionIndicator;
+  personality: 'friendly' | 'cautious' | 'grumpy';
+  selectionCrystal: THREE.Mesh; // Sims-style floating crystal above selected minion
 }
 
 // Wildlife (squirrels, rabbits) data
@@ -70,7 +77,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
+  const cameraControllerRef = useRef<CameraController | null>(null);
   const minionsRef = useRef<Map<string, MinionSceneData>>(new Map());
+  const wizardRef = useRef<MinionInstance | null>(null);
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2());
   const terrainBuilderRef = useRef<ContinuousTerrainBuilder | null>(null);
@@ -79,6 +88,10 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const dayNightCycleRef = useRef<DayNightCycle | null>(null);
   const torchManagerRef = useRef<TorchManager | null>(null);
   const interiorLightsRef = useRef<InteriorLight[]>([]);
+  const collisionMeshesRef = useRef<THREE.Mesh[]>([]);
+  const teleportEffectRef = useRef<TeleportEffect | null>(null);
+  const magicCircleRef = useRef<MagicCircle | null>(null);
+  const wizardBehaviorRef = useRef<WizardBehavior | null>(null);
   const wildlifeRef = useRef<WildlifeData[]>([]);
   const cloudShadowsRef = useRef<CloudShadowData[]>([]);
 
@@ -86,16 +99,25 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const minions = useGameStore((state) => state.minions);
   const selectedMinionId = useGameStore((state) => state.selectedMinionId);
   const setSelectedMinion = useGameStore((state) => state.setSelectedMinion);
+  const conversation = useGameStore((state) => state.conversation);
+  const enterConversation = useGameStore((state) => state.enterConversation);
+  const exitConversation = useGameStore((state) => state.exitConversation);
+  const setConversationPhase = useGameStore((state) => state.setConversationPhase);
+  const transitionToMinion = useGameStore((state) => state.transitionToMinion);
 
   // Handle click on canvas
   const handleClick = useCallback((event: MouseEvent) => {
-    if (!containerRef.current || !sceneRef.current || !cameraRef.current) return;
+    if (!containerRef.current || !sceneRef.current) return;
+
+    // Use the camera controller's active camera for raycasting
+    const camera = cameraControllerRef.current?.getCamera() || cameraRef.current;
+    if (!camera) return;
 
     const rect = containerRef.current.getBoundingClientRect();
     mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    raycasterRef.current.setFromCamera(mouseRef.current, camera);
 
     // Check for minion clicks
     const minionMeshes: THREE.Object3D[] = [];
@@ -113,12 +135,171 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
 
       const minionId = clickedObject.userData.minionId;
       if (minionId) {
+        // Get the minion's position for camera animation
+        const minionData = minionsRef.current.get(minionId);
+        const wizard = wizardRef.current;
+
+        if (minionData && wizard && cameraControllerRef.current) {
+          const minionPos = minionData.currentPosition.clone();
+
+          // Check if already in conversation
+          const store = useGameStore.getState();
+          if (store.conversation.active) {
+            // Transition to different minion
+            if (store.conversation.minionId !== minionId) {
+              transitionToMinion(minionId);
+
+              // Get the new minion data for reaction
+              const newMinionData = minionsRef.current.get(minionId);
+
+              // Calculate wizard position for new minion
+              const wizardPos = calculateWizardPosition(minionPos, cameraControllerRef.current.getCurrentPosition());
+
+              // Play teleport effect
+              const oldWizardPos = wizard.mesh.position.clone();
+              if (teleportEffectRef.current) {
+                teleportEffectRef.current.playDisappear(oldWizardPos);
+              }
+
+              setTimeout(() => {
+                wizard.mesh.position.copy(wizardPos);
+                const dirToMinion = new THREE.Vector3()
+                  .subVectors(minionPos, wizardPos)
+                  .normalize();
+                wizard.mesh.rotation.y = Math.atan2(dirToMinion.x, dirToMinion.z);
+
+                if (teleportEffectRef.current) {
+                  teleportEffectRef.current.playAppear(wizardPos);
+                }
+
+                // Trigger reaction on new minion
+                if (newMinionData?.reactionIndicator) {
+                  setTimeout(() => {
+                    const reaction = getReactionForPersonality(newMinionData.personality);
+                    newMinionData.reactionIndicator.show(reaction);
+                  }, 300);
+                }
+              }, 200);
+
+              // Trigger camera transition
+              cameraControllerRef.current.transitionToMinion({
+                minionPosition: minionPos,
+                wizardPosition: wizardPos,
+              });
+            }
+          } else {
+            // Enter conversation mode
+            enterConversation(minionId);
+
+            // Tell wizard behavior we're in conversation
+            wizardBehaviorRef.current?.enterConversation();
+
+            // Calculate wizard position (left of minion, facing minion)
+            const wizardPos = calculateWizardPosition(minionPos, cameraControllerRef.current.getCurrentPosition());
+
+            // Play teleport effect at old position
+            const oldWizardPos = wizard.mesh.position.clone();
+            if (teleportEffectRef.current) {
+              teleportEffectRef.current.playDisappear(oldWizardPos);
+            }
+
+            // Teleport wizard after brief delay (let disappear effect start)
+            setTimeout(() => {
+              wizard.mesh.position.copy(wizardPos);
+
+              // Make wizard face the minion
+              const dirToMinion = new THREE.Vector3()
+                .subVectors(minionPos, wizardPos)
+                .normalize();
+              wizard.mesh.rotation.y = Math.atan2(dirToMinion.x, dirToMinion.z);
+
+              // Play appear effect at new position
+              if (teleportEffectRef.current) {
+                teleportEffectRef.current.playAppear(wizardPos);
+              }
+              if (magicCircleRef.current) {
+                magicCircleRef.current.show(wizardPos);
+                setTimeout(() => magicCircleRef.current?.hide(), 500);
+              }
+
+              // Trigger minion reaction after wizard appears
+              setTimeout(() => {
+                if (minionData.reactionIndicator) {
+                  const reaction = getReactionForPersonality(minionData.personality);
+                  minionData.reactionIndicator.show(reaction);
+                }
+              }, 300);
+            }, 200);
+
+            // Trigger camera animation
+            cameraControllerRef.current.enterConversation({
+              minionPosition: minionPos,
+              wizardPosition: wizardPos,
+            });
+          }
+        }
+
         setSelectedMinion(minionId);
         onMinionClick?.(minionId);
         return;
       }
     }
-  }, [setSelectedMinion, onMinionClick]);
+  }, [setSelectedMinion, onMinionClick, enterConversation, transitionToMinion]);
+
+  // Get reaction based on minion personality
+  const getReactionForPersonality = useCallback((personality: 'friendly' | 'cautious' | 'grumpy'): ReactionType => {
+    switch (personality) {
+      case 'friendly':
+        return 'wave'; // Excited wave
+      case 'cautious':
+        return 'exclamation'; // Surprised
+      case 'grumpy':
+        return 'anger'; // Annoyed
+      default:
+        return 'exclamation';
+    }
+  }, []);
+
+  // Calculate wizard position for conversation (in foreground, between camera and minion)
+  // MMO-style: wizard in left foreground facing minion, minion in right background facing camera
+  const calculateWizardPosition = useCallback((minionPos: THREE.Vector3, cameraPos: THREE.Vector3): THREE.Vector3 => {
+    // Direction from camera to minion
+    const cameraToMinion = new THREE.Vector3()
+      .subVectors(minionPos, cameraPos)
+      .normalize();
+
+    // Wizard is positioned between camera and minion, offset to the right
+    // This puts wizard in left foreground from camera's perspective
+    const rightOffset = new THREE.Vector3()
+      .crossVectors(cameraToMinion, new THREE.Vector3(0, 1, 0))
+      .normalize()
+      .multiplyScalar(1.5); // Offset to the right
+
+    // Position wizard further from minion for better framing
+    const towardCamera = cameraToMinion.clone().multiplyScalar(-4.5); // 4.5 units toward camera (further from minion)
+    const wizardPos = minionPos.clone().add(towardCamera).add(rightOffset);
+    wizardPos.y = minionPos.y; // Same height as minion
+
+    return wizardPos;
+  }, []);
+
+  // Create a Sims-style selection crystal (floating diamond above character)
+  const createSelectionCrystal = useCallback((): THREE.Mesh => {
+    const geometry = new THREE.OctahedronGeometry(0.3, 0);
+    const material = new THREE.MeshStandardMaterial({
+      color: 0x00ff88,
+      emissive: 0x00ff88,
+      emissiveIntensity: 0.5,
+      transparent: true,
+      opacity: 0.8,
+      metalness: 0.3,
+      roughness: 0.2,
+    });
+    const crystal = new THREE.Mesh(geometry, material);
+    crystal.visible = false; // Hidden by default
+    crystal.position.y = 3.5; // Float above minion head
+    return crystal;
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -130,22 +311,20 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     scene.background = new THREE.Color(0x87ceeb);
     sceneRef.current = scene;
 
-    // Create isometric camera - cozy but shows terrain
-    const aspect = container.clientWidth / container.clientHeight;
-    const frustumSize = 35; // Larger frustum to show more world
-    const camera = new THREE.OrthographicCamera(
-      -frustumSize * aspect,
-      frustumSize * aspect,
-      frustumSize,
-      -frustumSize,
-      0.1,
-      500
-    );
-    const distance = 50;
-    camera.position.set(distance, distance * 0.6, distance);
-    camera.lookAt(0, 2, 0);
-    camera.zoom = 1.0; // Default zoom
-    camera.updateProjectionMatrix();
+    // Create camera controller (manages ortho/perspective switching)
+    const cameraController = new CameraController(container, {
+      isometricFrustumSize: 35,
+      isometricDistance: 50,
+      isometricPolarAngle: CAMERA_POLAR_ANGLE,
+      conversationFov: 50,
+      conversationDistance: 8,
+      conversationHeight: 1.5,
+      transitionDuration: 0.8,
+    });
+    cameraControllerRef.current = cameraController;
+
+    // Get the orthographic camera for OrbitControls (used in isometric mode)
+    const camera = cameraController.getOrthoCamera();
     cameraRef.current = camera;
 
     // Create renderer
@@ -225,6 +404,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     const buildingY = terrainBuilder.getHeightAt(0, 0);
     buildingRefs.root.position.y = buildingY;
     scene.add(buildingRefs.root);
+
+    // Update floorY to include terrain height
+    buildingBoundsRef.current!.floorY = buildingY + 0.3;
 
     // Store interior lights for day/night control
     interiorLightsRef.current = buildingRefs.allLights;
@@ -443,10 +625,60 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     wizardInstance.mesh.userData.isWizard = true;
     wizardInstance.mesh.castShadow = true;
     scene.add(wizardInstance.mesh);
+    wizardRef.current = wizardInstance;
 
-    // Wizard state for animation
-    let wizardIdleTimer = 0;
+    // Wizard wandering behavior
+    const wizardBehavior = new WizardBehavior({
+      wanderRadius: 10,
+      homePosition: new THREE.Vector3(0, buildingY + 0.5, 2),
+      idleDurationMin: 2,
+      idleDurationMax: 5,
+      wanderSpeed: 1.2,
+    });
+    wizardBehaviorRef.current = wizardBehavior;
+
+    // Wizard state for animation (will be set by behavior callbacks)
     let wizardIsInside = false;
+
+    // Collect collision meshes for camera spring arm
+    const collisionMeshes: THREE.Mesh[] = [];
+    buildingRefs.rooms.forEach((roomRef) => {
+      // Add walls as collision objects
+      for (const dir of ['north', 'south', 'east', 'west'] as const) {
+        const wallGroup = roomRef.walls[dir];
+        if (wallGroup) {
+          wallGroup.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              collisionMeshes.push(child);
+            }
+          });
+        }
+      }
+      // Add roof as collision
+      if (roomRef.roof) {
+        roomRef.roof.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            collisionMeshes.push(child);
+          }
+        });
+      }
+    });
+    collisionMeshesRef.current = collisionMeshes;
+    cameraController.setCollisionMeshes(collisionMeshes);
+
+    // Create teleport effects
+    const teleportEffect = new TeleportEffect({
+      particleCount: 40,
+      color: 0x9966ff,
+      secondaryColor: 0xffcc00,
+      duration: 0.4,
+    });
+    scene.add(teleportEffect.getGroup());
+    teleportEffectRef.current = teleportEffect;
+
+    const magicCircle = new MagicCircle(1.2, 0x9966ff);
+    scene.add(magicCircle.getMesh());
+    magicCircleRef.current = magicCircle;
 
     // Add click listener
     renderer.domElement.addEventListener('click', handleClick);
@@ -462,9 +694,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     // Helper function to get terrain height at position (or building floor if inside)
     function getGroundHeight(x: number, z: number): number {
       if (isInsideBuilding(x, z)) {
-        return buildingBoundsRef.current!.floorY + 0.5; // Standing height on floor
+        return buildingBoundsRef.current!.floorY + 0.1; // Standing height on floor
       }
-      return terrainBuilder.getHeightAt(x, z) + 0.5; // Standing height on terrain
+      return terrainBuilder.getHeightAt(x, z) + 0.1; // Standing height on terrain
     }
 
     // Helper function to select new destination
@@ -490,6 +722,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         data.idleTimer = 1 + Math.random() * 2;
       }
     }
+
+    // Set wizard behavior callbacks
+    wizardBehavior.setCallbacks(getGroundHeight, isInsideBuilding);
 
     // Animation loop
     let lastTime = 0;
@@ -642,23 +877,65 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         }
       }
 
-      // Animate wizard (gentle idle animation)
-      wizardInstance.animator.update(deltaTime, elapsedTime, false);
+      // Update wizard wandering behavior
+      const wizardMovement = wizardBehavior.update(
+        deltaTime,
+        wizardInstance.mesh.position
+      );
+
+      let wizardIsMoving = false;
+      if (wizardMovement && !teleportEffect.isActive()) {
+        wizardIsMoving = wizardMovement.isMoving;
+
+        // Move wizard to new position
+        wizardInstance.mesh.position.x = wizardMovement.targetPosition.x;
+        wizardInstance.mesh.position.z = wizardMovement.targetPosition.z;
+
+        // Face movement direction
+        if (wizardIsMoving) {
+          const dir = new THREE.Vector3()
+            .subVectors(wizardMovement.targetPosition, wizardInstance.mesh.position);
+          if (dir.lengthSq() > 0.001) {
+            wizardInstance.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+          }
+        }
+      }
+
+      // Animate wizard
+      wizardInstance.animator.update(deltaTime, elapsedTime, wizardIsMoving);
       wizardIsInside = isInsideBuilding(
         wizardInstance.mesh.position.x,
         wizardInstance.mesh.position.z
       );
-      // Gentle bob for wizard
-      const wizardBob = Math.sin(elapsedTime * 1.5) * 0.02;
-      wizardInstance.mesh.position.y = buildingY + 0.5 + wizardBob;
+
+      // Apply bob/bounce (only if not teleporting)
+      if (!teleportEffect.isActive()) {
+        const bounce = wizardInstance.animator.getBounce();
+        const baseY = getGroundHeight(
+          wizardInstance.mesh.position.x,
+          wizardInstance.mesh.position.z
+        );
+        wizardInstance.mesh.position.y = baseY + bounce;
+      }
+
+      // Update teleport effects
+      teleportEffect.update(deltaTime);
+      magicCircle.update(deltaTime);
 
       // Track if any character is inside the building (wizard or minion)
       let anyCharacterInside = wizardIsInside;
 
+      // Get current conversation state
+      const conversationState = useGameStore.getState().conversation;
+      const inConversation = conversationState.active;
+
       // Animate minions
       minionsRef.current.forEach((data) => {
-        // Update animator
-        data.instance.animator.update(deltaTime, elapsedTime, data.isMoving);
+        // Check if this minion is in conversation
+        const isConversing = inConversation && conversationState.minionId === data.minionId;
+
+        // Update animator (not moving if conversing)
+        data.instance.animator.update(deltaTime, elapsedTime, data.isMoving && !isConversing);
 
         // Check if inside building
         data.isInsideBuilding = isInsideBuilding(
@@ -667,6 +944,30 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         );
         if (data.isInsideBuilding) {
           anyCharacterInside = true;
+        }
+
+        // Update reaction indicator
+        data.reactionIndicator.update(deltaTime);
+
+        // Skip movement if conversing - minion stays still and faces wizard
+        if (isConversing) {
+          // Face the wizard during conversation
+          const wizard = wizardRef.current;
+          if (wizard) {
+            const dirToWizard = new THREE.Vector3()
+              .subVectors(wizard.mesh.position, data.currentPosition)
+              .normalize();
+            data.instance.mesh.rotation.y = Math.atan2(dirToWizard.x, dirToWizard.z);
+          }
+
+          // Apply position with gentle idle bob
+          const bounce = data.instance.animator.getBounce();
+          data.instance.mesh.position.set(
+            data.currentPosition.x,
+            data.currentPosition.y + bounce,
+            data.currentPosition.z
+          );
+          return; // Skip normal movement logic
         }
 
         if (data.isMoving && data.targetPosition) {
@@ -737,6 +1038,12 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
             data.currentPosition.z
           );
         }
+
+        // Animate selection crystal (bob and rotate)
+        if (data.selectionCrystal.visible) {
+          data.selectionCrystal.rotation.y = elapsedTime * 2;
+          data.selectionCrystal.position.y = 3.5 + Math.sin(elapsedTime * 3) * 0.15;
+        }
       });
 
       // Update wall culler with character-inside state
@@ -745,26 +1052,38 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         wallCullerRef.current.update(deltaTime);
       }
 
-      // Clamp camera target to terrain bounds
-      controls.target.x = THREE.MathUtils.clamp(controls.target.x, -WORLD_HALF_SIZE * 0.9, WORLD_HALF_SIZE * 0.9);
-      controls.target.z = THREE.MathUtils.clamp(controls.target.z, -WORLD_HALF_SIZE * 0.9, WORLD_HALF_SIZE * 0.9);
+      // Update camera controller
+      cameraController.update(deltaTime);
 
-      controls.update();
-      renderer.render(scene, camera);
+      // Handle controls based on camera mode
+      if (cameraController.getMode() === 'isometric' && !cameraController.isTransitioning()) {
+        // Clamp camera target to terrain bounds
+        controls.target.x = THREE.MathUtils.clamp(controls.target.x, -WORLD_HALF_SIZE * 0.9, WORLD_HALF_SIZE * 0.9);
+        controls.target.z = THREE.MathUtils.clamp(controls.target.z, -WORLD_HALF_SIZE * 0.9, WORLD_HALF_SIZE * 0.9);
+
+        controls.enabled = true;
+        controls.update();
+
+        // Sync camera controller with orbit controls
+        cameraController.syncFromOrbitControls(controls.target);
+      } else {
+        // Disable orbit controls during conversation/transition
+        controls.enabled = false;
+      }
+
+      // Render with the active camera
+      const activeCamera = cameraController.getCamera();
+      renderer.render(scene, activeCamera);
     }
     animate(0);
 
-    // Handle resize - use same frustumSize (35) defined above
+    // Handle resize
     const handleResize = () => {
       if (!container) return;
-      const newAspect = container.clientWidth / container.clientHeight;
-      const fs = 35; // Match frustumSize above
-      camera.left = -fs * newAspect;
-      camera.right = fs * newAspect;
-      camera.top = fs;
-      camera.bottom = -fs;
-      camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      cameraController.handleResize(width, height);
+      renderer.setSize(width, height);
     };
     window.addEventListener('resize', handleResize);
 
@@ -777,6 +1096,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       terrainBuilderRef.current?.dispose();
       dayNightCycleRef.current?.dispose();
       torchManagerRef.current?.dispose();
+      cameraControllerRef.current?.dispose();
+      teleportEffectRef.current?.dispose();
+      magicCircleRef.current?.dispose();
       wizardInstance.dispose();
       // Cleanup wildlife
       for (const animal of wildlifeRef.current) {
@@ -806,9 +1128,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     function getGroundHeight(x: number, z: number): number {
       const bounds = buildingBoundsRef.current;
       if (bounds && x >= bounds.minX && x <= bounds.maxX && z >= bounds.minZ && z <= bounds.maxZ) {
-        return bounds.floorY + 0.5;
+        return bounds.floorY + 0.1;
       }
-      return terrain.getHeightAt(x, z) + 0.5;
+      return terrain.getHeightAt(x, z) + 0.1;
     }
 
     // Available minion species (not wizard/witch - those are player characters)
@@ -869,6 +1191,18 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
 
         scene.add(instance.mesh);
 
+        // Create reaction indicator for this minion
+        const reactionIndicator = new ReactionIndicator();
+        instance.mesh.add(reactionIndicator.getGroup());
+
+        // Create Sims-style selection crystal
+        const selectionCrystal = createSelectionCrystal();
+        instance.mesh.add(selectionCrystal);
+
+        // Assign personality based on traits or random
+        const personalities: Array<'friendly' | 'cautious' | 'grumpy'> = ['friendly', 'cautious', 'grumpy'];
+        const personality = personalities[index % personalities.length];
+
         currentMinions.set(minion.id, {
           minionId: minion.id,
           instance,
@@ -879,6 +1213,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
           speed: 2.0 + Math.random() * 0.5,
           isInsideBuilding: false,
           torchId,
+          reactionIndicator,
+          personality,
+          selectionCrystal,
         });
       }
     });
@@ -888,6 +1225,7 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       if (!minions.find((m) => m.id === minionId)) {
         scene.remove(data.instance.mesh);
         data.instance.dispose();
+        data.reactionIndicator.dispose();
         // Remove associated torch
         if (torchManagerRef.current) {
           torchManagerRef.current.removeTorch(data.torchId);
@@ -896,19 +1234,61 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       }
     });
 
-    // Update selected state (add glow to selected)
+    // Update selected state (show/hide Sims-style crystal)
     currentMinions.forEach((data) => {
       const isSelected = data.minionId === selectedMinionId;
-      data.instance.mesh.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
-          child.material.emissiveIntensity = isSelected ? 0.3 : 0;
-          if (isSelected && child.material.emissive) {
-            child.material.emissive.setHex(0xffff00);
-          }
-        }
-      });
+      data.selectionCrystal.visible = isSelected;
     });
   }, [hasHydrated, minions, selectedMinionId]);
+
+  // Handle conversation phase changes
+  useEffect(() => {
+    if (!cameraControllerRef.current) return;
+
+    // When exiting conversation, trigger camera return animation
+    if (conversation.phase === 'exiting') {
+      cameraControllerRef.current.exitConversation();
+
+      // Exit wizard conversation mode and teleport back near home
+      if (wizardBehaviorRef.current && wizardRef.current && teleportEffectRef.current) {
+        const wizard = wizardRef.current;
+        const oldPos = wizard.mesh.position.clone();
+
+        // Play teleport effect
+        teleportEffectRef.current.playDisappear(oldPos);
+
+        // Teleport wizard back near cottage after delay
+        setTimeout(() => {
+          wizard.mesh.position.set(0, 0.5, 2);
+          teleportEffectRef.current?.playAppear(wizard.mesh.position);
+          wizardBehaviorRef.current?.exitConversation();
+        }, 200);
+      }
+
+      // Clear conversation state after animation completes
+      const timer = setTimeout(() => {
+        setConversationPhase(null);
+      }, 1000); // Match transition duration
+
+      return () => clearTimeout(timer);
+    }
+
+    // When entering conversation, wait for camera transition to complete
+    if (conversation.phase === 'entering') {
+      // Set phase to active after transition duration completes
+      // Don't check isTransitioning() since camera might be in edge case position
+      const timer = setTimeout(() => {
+        setConversationPhase('active');
+      }, 900); // Slightly after transition duration (0.8s)
+
+      return () => clearTimeout(timer);
+    }
+  }, [conversation.phase, setConversationPhase]);
+
+  // Expose exit conversation for UI components
+  const handleLeaveConversation = useCallback(() => {
+    exitConversation();
+  }, [exitConversation]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%', cursor: 'pointer' }} />;
 }

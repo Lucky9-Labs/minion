@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { SimpleScene } from './SimpleScene';
 import { MinionPanel } from './ui/MinionPanel';
 import { QuestPanel } from './ui/QuestPanel';
 import { VaultPanel } from './ui/VaultPanel';
 import { CharacterPanel } from './ui/CharacterPanel';
+import { ConversationPanel } from './ui/ConversationPanel';
 import { useGameStore } from '@/store/gameStore';
 import { TOWER_FLOORS } from '@/types/game';
 import { useMinionMovement } from '@/lib/questSimulation';
@@ -20,6 +21,8 @@ export function GameLayout() {
   const tower = useGameStore((state) => state.tower);
   const minions = useGameStore((state) => state.minions);
   const activeQuestId = useGameStore((state) => state.activeQuestId);
+  const conversation = useGameStore((state) => state.conversation);
+  const exitConversation = useGameStore((state) => state.exitConversation);
 
   // Initialize sound system
   useEffect(() => {
@@ -47,6 +50,21 @@ export function GameLayout() {
     observatory: '#06b6d4',
     default: wowTheme.colors.scout,
   };
+
+  // Handle Escape key to exit conversation
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    if (event.key === 'Escape' && conversation.active && conversation.phase === 'active') {
+      exitConversation();
+    }
+  }, [conversation.active, conversation.phase, exitConversation]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
+
+  // Hide normal UI during conversation
+  const inConversation = conversation.active;
 
   return (
     <div className="relative w-full h-screen overflow-hidden" style={{ background: wowTheme.colors.bgDarkest }}>
@@ -160,8 +178,8 @@ export function GameLayout() {
         </div>
       </div>
 
-      {/* Navigation buttons */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 pointer-events-auto">
+      {/* Navigation buttons (hidden during conversation) */}
+      <div className={`absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 pointer-events-auto transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <NavButton
           icon={<WowIcon name="minions" size="lg" color={activePanel === 'minions' ? wowTheme.colors.goldLight : wowTheme.colors.textSecondary} />}
           label="Minions"
@@ -183,8 +201,8 @@ export function GameLayout() {
         />
       </div>
 
-      {/* Side panels */}
-      <div className="absolute top-20 left-4 bottom-20 flex flex-col gap-4 pointer-events-none">
+      {/* Side panels (hidden during conversation) */}
+      <div className={`absolute top-20 left-4 bottom-20 flex flex-col gap-4 pointer-events-none transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div className="pointer-events-auto">
           {activePanel === 'minions' && <MinionPanel />}
           {activePanel === 'quests' && <QuestPanel />}
@@ -192,8 +210,8 @@ export function GameLayout() {
         </div>
       </div>
 
-      {/* Tower floors legend */}
-      <div className="absolute bottom-20 right-4 pointer-events-auto">
+      {/* Tower floors legend (hidden during conversation) */}
+      <div className={`absolute bottom-20 right-4 pointer-events-auto transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div style={{
           background: `linear-gradient(180deg, ${wowTheme.colors.stoneMid} 0%, ${wowTheme.colors.stoneDark} 100%)`,
           border: `3px solid ${wowTheme.colors.stoneBorder}`,
@@ -282,7 +300,10 @@ export function GameLayout() {
       )}
 
       {/* Character panel for selected minion */}
-      <CharacterPanel />
+      {!inConversation && <CharacterPanel />}
+
+      {/* Conversation panel (shown during minion conversation) */}
+      <ConversationPanel />
     </div>
   );
 }

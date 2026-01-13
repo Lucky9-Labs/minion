@@ -636,6 +636,7 @@ function StateIndicator({ state }: { state: Minion['state'] }) {
     working: '#f59e0b',
     stuck: '#ef4444',
     returning: '#10b981',
+    conversing: '#a855f7', // Purple for conversation
   };
 
   return (

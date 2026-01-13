@@ -1127,7 +1127,7 @@ export class ContinuousTerrainBuilder {
 
       if (distFromCenter > this.config.clearingRadius * 1.5 && !this.isInExclusionZone(x, z) && !this.isOnRiver(x, z) && !this.isOnPath(x, z)) {
         const log = this.buildFallenLog();
-        log.position.set(x, this.getHeightAt(x, z) + 0.2, z);
+        log.position.set(x, this.getHeightAt(x, z), z);
         log.rotation.y = this.rng.next() * Math.PI * 2;
         group.add(log);
       }
@@ -1464,7 +1464,7 @@ export class ContinuousTerrainBuilder {
     const logGeo = new THREE.CylinderGeometry(0.25, 0.35, length, 8);
     const log = new THREE.Mesh(logGeo, logMat);
     log.rotation.z = Math.PI / 2;
-    log.position.y = 0.25;
+    log.position.y = 0.15;
     log.castShadow = true;
     group.add(log);
 
