@@ -64,11 +64,11 @@ export interface ContinuousTerrainConfig {
 export const DEFAULT_CONTINUOUS_CONFIG: ContinuousTerrainConfig = {
   worldSeed: 12345,
   worldSize: 120,              // Cozy world - 120 units total
-  resolution: 64,              // 64x64 height map - enough detail for visible facets
+  resolution: 40,              // 40x40 height map - larger polygons for visible low-poly aesthetic
   clearingRadius: 18,          // 18 unit flat area around tower
   maxHeight: 8,                // Max 8 units high at edges
   riverWidth: 4,               // 4 unit wide river
-  pathWidth: 2,                // 2 unit wide path
+  pathWidth: 2.5,              // 2.5 unit wide path for cobblestone
   exclusionZones: [{ x: 0, z: 0, radius: 12 }], // Default: center building area
 };
 

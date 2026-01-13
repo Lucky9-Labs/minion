@@ -1,10 +1,24 @@
 import * as THREE from 'three';
-import type { SpeciesBuilder, SpeciesConfig, SpeciesColorPalette, MinionRefs, AttachmentPoint } from '@/types/minion';
-import { MINION_SCALE, buildEyes } from './shared';
+import type {
+  SpeciesBuilder,
+  SpeciesConfig,
+  SpeciesColorPalette,
+  MinionRefs,
+  SpeciesMaterials,
+} from '@/types/minion';
+import {
+  MINION_SCALE,
+  createMaterials,
+  buildEyes,
+  buildMouth,
+  buildFloatingHand,
+  buildLeg,
+  createAttachmentPoints,
+} from './shared';
 
 /**
  * Penguin minion - waddles around, good for cold tasks
- * Cute, round body with flippers and a beak
+ * Uses same skeleton rig as goblin for animation compatibility
  */
 
 const PENGUIN_COLORS: SpeciesColorPalette = {
@@ -25,9 +39,9 @@ const PENGUIN_CONFIG: SpeciesConfig = {
   id: 'penguin',
   name: 'Penguin',
   proportions: {
-    headScale: 0.9,
-    bodyHeight: 0.8,
-    legLength: 0.3,
+    headScale: 1.0,
+    bodyHeight: 0.85,
+    legLength: 0.65,
   },
   limbType: 'floatingHand',
   footType: 'foot',
@@ -45,179 +59,163 @@ const PENGUIN_CONFIG: SpeciesConfig = {
 class PenguinBuilder implements SpeciesBuilder {
   config = PENGUIN_CONFIG;
 
-  build(): { mesh: THREE.Group; refs: MinionRefs } {
+  build(colors?: Partial<SpeciesColorPalette>): { mesh: THREE.Group; refs: MinionRefs } {
+    const finalColors = { ...PENGUIN_COLORS, ...colors };
+    const materials = createMaterials(finalColors);
     const scale = MINION_SCALE;
-    const group = new THREE.Group();
-    const { proportions, colors } = this.config;
+    const { proportions } = this.config;
 
-    // Materials
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color: colors.primary,
-      flatShading: true,
-    });
-    const bellyMat = new THREE.MeshStandardMaterial({
-      color: colors.tertiary, // White belly
-      flatShading: true,
-    });
-    const accentMat = new THREE.MeshStandardMaterial({
-      color: colors.clothing?.main ?? 0xff9500, // Orange
-      flatShading: true,
-    });
-    const eyeWhiteMat = new THREE.MeshStandardMaterial({
-      color: colors.eyeWhite,
-      flatShading: true,
-    });
+    const root = new THREE.Group();
 
-    // === BODY (oval/egg shape) ===
-    const bodyHeight = 0.7 * scale * proportions.bodyHeight;
-    const bodyGeo = new THREE.SphereGeometry(0.35 * scale * 1.2, 8, 6); // Round body
-    bodyGeo.scale(1, 1.3, 0.9); // Taller, slightly flat
-    const body = new THREE.Mesh(bodyGeo, bodyMat);
-    body.position.y = bodyHeight;
-    body.castShadow = true;
-    group.add(body);
-
-    // Belly (white front)
-    const bellyGeo = new THREE.SphereGeometry(0.28 * scale, 6, 5);
-    bellyGeo.scale(0.8, 1.2, 0.5);
-    const belly = new THREE.Mesh(bellyGeo, bellyMat);
-    belly.position.set(0, bodyHeight - 0.05 * scale, 0.15 * scale);
-    group.add(belly);
-
-    // === HEAD ===
-    const headGroup = new THREE.Group();
-    const headY = bodyHeight + 0.4 * scale;
-
-    const headGeo = new THREE.SphereGeometry(0.22 * scale * proportions.headScale, 6, 5);
-    const head = new THREE.Mesh(headGeo, bodyMat);
-    head.castShadow = true;
-    headGroup.add(head);
-
-    // White face patch
-    const facePatchGeo = new THREE.SphereGeometry(0.15 * scale, 5, 4);
-    facePatchGeo.scale(0.8, 0.9, 0.5);
-    const facePatch = new THREE.Mesh(facePatchGeo, bellyMat);
-    facePatch.position.set(0, 0.02 * scale, 0.12 * scale);
-    headGroup.add(facePatch);
-
-    // Eyes
-    const eyeMaterials = {
-      primary: bodyMat,
-      secondary: bellyMat,
-      tertiary: bellyMat,
-      eyeWhite: eyeWhiteMat,
-      pupil: new THREE.MeshBasicMaterial({ color: colors.pupil }),
-      mouth: new THREE.MeshBasicMaterial({ color: colors.mouth }),
-    };
-    const { leftEyeGroup, rightEyeGroup, leftPupil, rightPupil, leftEyelid, rightEyelid } = buildEyes(
-      eyeMaterials,
-      bellyMat,
-      scale * 0.8
-    );
-    leftEyeGroup.position.set(0.08 * scale, 0.05 * scale, 0.15 * scale);
-    rightEyeGroup.position.set(-0.08 * scale, 0.05 * scale, 0.15 * scale);
-    headGroup.add(leftEyeGroup, rightEyeGroup);
-
-    // Beak (orange cone)
-    const beakGeo = new THREE.ConeGeometry(0.04 * scale, 0.1 * scale, 4);
-    beakGeo.rotateX(Math.PI / 2);
-    const beak = new THREE.Mesh(beakGeo, accentMat);
-    beak.position.set(0, -0.02 * scale, 0.2 * scale);
-    headGroup.add(beak);
-
-    headGroup.position.y = headY;
-    group.add(headGroup);
-
-    // === FLIPPERS (arms) ===
-    const flipperGeo = new THREE.BoxGeometry(0.08 * scale, 0.25 * scale, 0.15 * scale);
-
-    const leftFlipper = new THREE.Mesh(flipperGeo, bodyMat);
-    leftFlipper.position.set(0.35 * scale, bodyHeight, 0);
-    leftFlipper.rotation.z = -0.3;
-    leftFlipper.castShadow = true;
-    group.add(leftFlipper);
-
-    const rightFlipper = new THREE.Mesh(flipperGeo, bodyMat);
-    rightFlipper.position.set(-0.35 * scale, bodyHeight, 0);
-    rightFlipper.rotation.z = 0.3;
-    rightFlipper.castShadow = true;
-    group.add(rightFlipper);
-
-    // === FEET (orange) ===
-    const footGeo = new THREE.BoxGeometry(0.12 * scale, 0.04 * scale, 0.15 * scale);
-
-    const leftFoot = new THREE.Mesh(footGeo, accentMat);
-    leftFoot.position.set(0.1 * scale, 0.02 * scale, 0.03 * scale);
-    group.add(leftFoot);
-
-    const rightFoot = new THREE.Mesh(footGeo, accentMat);
-    rightFoot.position.set(-0.1 * scale, 0.02 * scale, 0.03 * scale);
-    group.add(rightFoot);
-
-    // === WRAP PARTS IN GROUPS FOR ANIMATION SYSTEM ===
-    const bodyGroup = new THREE.Group();
-    bodyGroup.add(body);
-    bodyGroup.add(belly);
-    group.add(bodyGroup);
-
-    const leftLegGroup = new THREE.Group();
-    leftLegGroup.add(leftFoot);
-    const rightLegGroup = new THREE.Group();
-    rightLegGroup.add(rightFoot);
-
-    const leftHandGroup = new THREE.Group();
-    leftHandGroup.add(leftFlipper);
-    const rightHandGroup = new THREE.Group();
-    rightHandGroup.add(rightFlipper);
-
-    // Mouth placeholder
-    const mouthGeo = new THREE.BoxGeometry(0.01, 0.01, 0.01);
-    const mouthMesh = new THREE.Mesh(mouthGeo, accentMat);
-    mouthMesh.visible = false;
-    headGroup.add(mouthMesh);
-
-    // === ATTACHMENT POINTS ===
-    const attachments = new Map<AttachmentPoint, THREE.Group>();
-
-    const headTop = new THREE.Group();
-    headTop.position.set(0, 0.2 * scale, 0);
-    headGroup.add(headTop);
-    attachments.set('head_top', headTop);
-
-    const leftHandAttach = new THREE.Group();
-    leftHandAttach.position.set(0, -0.12 * scale, 0);
-    leftFlipper.add(leftHandAttach);
-    attachments.set('left_hand', leftHandAttach);
-
-    const rightHandAttach = new THREE.Group();
-    rightHandAttach.position.set(0, -0.12 * scale, 0);
-    rightFlipper.add(rightHandAttach);
-    attachments.set('right_hand', rightHandAttach);
-
-    const back = new THREE.Group();
-    back.position.set(0, bodyHeight, -0.3 * scale);
-    group.add(back);
-    attachments.set('back', back);
-
-    // Refs
+    // Initialize refs
     const refs: MinionRefs = {
-      root: group,
-      head: headGroup,
-      body: bodyGroup,
-      leftLeg: leftLegGroup,
-      rightLeg: rightLegGroup,
-      leftHand: leftHandGroup,
-      rightHand: rightHandGroup,
-      leftPupil,
-      rightPupil,
-      leftEyelid,
-      rightEyelid,
-      mouth: mouthMesh,
-      attachments,
+      root,
+      body: new THREE.Group(),
+      head: new THREE.Group(),
+      leftLeg: new THREE.Group(),
+      rightLeg: new THREE.Group(),
+      leftHand: new THREE.Group(),
+      rightHand: new THREE.Group(),
+      leftEyelid: null as unknown as THREE.Mesh,
+      rightEyelid: null as unknown as THREE.Mesh,
+      leftPupil: null as unknown as THREE.Group,
+      rightPupil: null as unknown as THREE.Group,
+      mouth: null as unknown as THREE.Mesh,
+      attachments: new Map(),
       species: {},
     };
 
-    return { mesh: group, refs };
+    // === BUILD BODY ===
+    const body = this.buildBody(materials, scale, proportions.bodyHeight);
+    refs.body = body;
+    root.add(body);
+
+    // === BUILD LEGS (use shared buildLeg with orange feet) ===
+    const leftLeg = buildLeg(
+      materials.clothing?.main || materials.primary, // Orange for penguin feet
+      materials.primary, // Dark for upper leg
+      'left',
+      scale,
+      proportions.legLength
+    );
+    const rightLeg = buildLeg(
+      materials.clothing?.main || materials.primary,
+      materials.primary,
+      'right',
+      scale,
+      proportions.legLength
+    );
+    refs.leftLeg = leftLeg;
+    refs.rightLeg = rightLeg;
+    body.add(leftLeg);
+    body.add(rightLeg);
+
+    // === BUILD HEAD ===
+    const head = this.buildHead(materials, scale, proportions.headScale, refs);
+    refs.head = head;
+    // Position head above body
+    head.position.y = 0.62 * scale * proportions.bodyHeight;
+    root.add(head);
+
+    // === BUILD FLOATING HANDS (flippers use same rig) ===
+    const leftHand = buildFloatingHand(materials.primary, 'left', scale);
+    const rightHand = buildFloatingHand(materials.primary, 'right', scale);
+    refs.leftHand = leftHand;
+    refs.rightHand = rightHand;
+    root.add(leftHand);
+    root.add(rightHand);
+
+    // === CREATE ATTACHMENT POINTS ===
+    refs.attachments = createAttachmentPoints(head, body, leftHand, rightHand, scale);
+
+    return { mesh: root, refs };
+  }
+
+  private buildBody(
+    materials: SpeciesMaterials,
+    scale: number,
+    bodyHeight: number
+  ): THREE.Group {
+    const body = new THREE.Group();
+
+    // Main body (oval/egg shape) - dark blue-black
+    const bodyGeo = new THREE.CylinderGeometry(
+      0.2 * scale,
+      0.22 * scale,
+      0.35 * scale * bodyHeight,
+      6
+    );
+    const bodyMesh = new THREE.Mesh(bodyGeo, materials.primary);
+    bodyMesh.position.set(0, 0.4 * scale * bodyHeight, 0);
+    bodyMesh.castShadow = true;
+    body.add(bodyMesh);
+
+    // White belly patch (front)
+    const bellyGeo = new THREE.BoxGeometry(
+      0.28 * scale,
+      0.28 * scale * bodyHeight,
+      0.1 * scale
+    );
+    const belly = new THREE.Mesh(bellyGeo, materials.tertiary);
+    belly.position.set(0, 0.38 * scale * bodyHeight, 0.1 * scale);
+    belly.castShadow = true;
+    body.add(belly);
+
+    return body;
+  }
+
+  private buildHead(
+    materials: SpeciesMaterials,
+    scale: number,
+    headScale: number,
+    refs: MinionRefs
+  ): THREE.Group {
+    const head = new THREE.Group();
+    const hs = headScale;
+
+    // Main head (dark, low-poly sphere)
+    const headGeo = new THREE.SphereGeometry(0.25 * scale * hs, 6, 5);
+    headGeo.scale(1, 0.9, 0.95);
+    const headMesh = new THREE.Mesh(headGeo, materials.primary);
+    headMesh.castShadow = true;
+    head.add(headMesh);
+
+    // White face patch
+    const facePatchGeo = new THREE.SphereGeometry(0.16 * scale * hs, 5, 4);
+    facePatchGeo.scale(0.9, 0.9, 0.5);
+    const facePatch = new THREE.Mesh(facePatchGeo, materials.tertiary);
+    facePatch.position.set(0, 0, 0.12 * scale * hs);
+    head.add(facePatch);
+
+    // Eyes with eyelids
+    const eyes = buildEyes(materials, materials.primary, scale * hs);
+    head.add(eyes.leftEyeGroup);
+    head.add(eyes.rightEyeGroup);
+    refs.leftEyelid = eyes.leftEyelid;
+    refs.rightEyelid = eyes.rightEyelid;
+    refs.leftPupil = eyes.leftPupil;
+    refs.rightPupil = eyes.rightPupil;
+
+    // Beak (orange cone)
+    const beakGroup = new THREE.Group();
+    beakGroup.position.set(0, -0.04 * scale * hs, 0.2 * scale * hs);
+
+    const beakGeo = new THREE.ConeGeometry(0.06 * scale * hs, 0.12 * scale * hs, 4);
+    beakGeo.rotateX(Math.PI / 2);
+    const beak = new THREE.Mesh(beakGeo, materials.clothing?.main || materials.secondary);
+    beak.castShadow = true;
+    beakGroup.add(beak);
+
+    head.add(beakGroup);
+    refs.species.beak = beakGroup;
+
+    // Mouth (hidden, for animation system)
+    const mouth = buildMouth(materials, scale * hs);
+    mouth.visible = false;
+    head.add(mouth);
+    refs.mouth = mouth;
+
+    return head;
   }
 }
 

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { useGameStore } from '@/store/gameStore';
+import { useGameStore, useHasHydrated } from '@/store/gameStore';
 import { createMinion, knightHelmetConfig, getRegisteredSpecies } from '@/lib/minion';
 import type { MinionInstance } from '@/lib/minion';
 import { CameraRelativeWallCuller } from '@/lib/tower';
@@ -61,6 +61,7 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const torchManagerRef = useRef<TorchManager | null>(null);
   const interiorLightsRef = useRef<InteriorLight[]>([]);
 
+  const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
   const selectedMinionId = useGameStore((state) => state.selectedMinionId);
   const setSelectedMinion = useGameStore((state) => state.setSelectedMinion);
@@ -469,9 +470,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     };
   }, [handleClick]);
 
-  // Sync minions with store
+  // Sync minions with store (wait for hydration to ensure persisted data is loaded)
   useEffect(() => {
-    if (!sceneRef.current || !terrainBuilderRef.current) return;
+    if (!hasHydrated || !sceneRef.current || !terrainBuilderRef.current) return;
 
     const scene = sceneRef.current;
     const currentMinions = minionsRef.current;
@@ -583,7 +584,7 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         }
       });
     });
-  }, [minions, selectedMinionId]);
+  }, [hasHydrated, minions, selectedMinionId]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%', cursor: 'pointer' }} />;
 }

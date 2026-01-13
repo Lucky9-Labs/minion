@@ -71,6 +71,7 @@ export class DayNightCycle {
 
   // Lighting components
   private sunLight: THREE.DirectionalLight;
+  private moonLight: THREE.DirectionalLight;
   private ambientLight: THREE.AmbientLight;
   private sunMesh: THREE.Mesh;
   private moonMesh: THREE.Mesh;
@@ -119,6 +120,25 @@ export class DayNightCycle {
     scene.add(this.sunLight);
     scene.add(this.sunLight.target);
 
+    // Create moon directional light (very faint for subtle night shadows)
+    this.moonLight = new THREE.DirectionalLight(0x6688aa, 0.3);
+    this.moonLight.castShadow = true;
+
+    // Configure moon shadow map (smaller than sun for performance)
+    this.moonLight.shadow.mapSize.width = config.shadowMapSize / 2;
+    this.moonLight.shadow.mapSize.height = config.shadowMapSize / 2;
+    this.moonLight.shadow.camera.near = 0.5;
+    this.moonLight.shadow.camera.far = 200;
+    this.moonLight.shadow.camera.left = -config.shadowFrustum;
+    this.moonLight.shadow.camera.right = config.shadowFrustum;
+    this.moonLight.shadow.camera.top = config.shadowFrustum;
+    this.moonLight.shadow.camera.bottom = -config.shadowFrustum;
+    this.moonLight.shadow.bias = -0.001;
+    this.moonLight.shadow.normalBias = 0.02;
+
+    scene.add(this.moonLight);
+    scene.add(this.moonLight.target);
+
     // Create ambient light
     this.ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
     scene.add(this.ambientLight);
@@ -150,8 +170,18 @@ export class DayNightCycle {
     this.sunLight.target.position.set(0, 0, 0);
 
     // Position moon opposite to sun
-    this.moonMesh.position.set(-sunX, -sunY + 20, -sunZ);
+    const moonX = -sunX;
+    const moonY = -sunY + 20;
+    const moonZ = -sunZ;
+    this.moonMesh.position.set(moonX, moonY, moonZ);
     this.moonMesh.visible = sunY < 10; // Only visible at night
+
+    // Update moon light position and intensity
+    this.moonLight.position.set(moonX, moonY, moonZ);
+    this.moonLight.target.position.set(0, 0, 0);
+    // Moon light only active at night (when moon is high enough)
+    const moonIntensity = moonY > 5 ? 0.25 * (moonY / 30) : 0;
+    this.moonLight.intensity = Math.min(0.3, moonIntensity);
 
     // Get current time period
     const period = this.getTimePeriod();
@@ -291,6 +321,8 @@ export class DayNightCycle {
     this.scene.remove(this.moonMesh);
     this.scene.remove(this.sunLight);
     this.scene.remove(this.sunLight.target);
+    this.scene.remove(this.moonLight);
+    this.scene.remove(this.moonLight.target);
     this.scene.remove(this.ambientLight);
 
     this.sunMesh.geometry.dispose();

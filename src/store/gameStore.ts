@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type {
@@ -87,6 +88,9 @@ const initialState: GameState = {
   postcards: [],
   activeQuestId: null,
 };
+
+// Track hydration status
+let hasHydrated = false;
 
 export const useGameStore = create<GameStore>()(
   persist(
@@ -277,6 +281,38 @@ export const useGameStore = create<GameStore>()(
         }
         return merged;
       },
+      onRehydrateStorage: () => {
+        return () => {
+          hasHydrated = true;
+        };
+      },
     }
   )
 );
+
+/**
+ * Hook to check if the store has been hydrated from localStorage.
+ * Use this to delay rendering components that depend on persisted state.
+ */
+export function useHasHydrated() {
+  const [hydrated, setHydrated] = useState(hasHydrated);
+
+  useEffect(() => {
+    // If already hydrated, we're done
+    if (hasHydrated) {
+      setHydrated(true);
+      return;
+    }
+
+    // Subscribe to hydration
+    const unsubscribe = useGameStore.persist.onFinishHydration(() => {
+      setHydrated(true);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  return hydrated;
+}

@@ -114,6 +114,14 @@ export class ContinuousTerrainBuilder {
     const water = this.buildWaterMesh();
     group.add(water);
 
+    // Cobblestone paths (3D modeled stones)
+    const cobblestones = this.buildCobblestonePaths();
+    group.add(cobblestones);
+
+    // Grass blades of varying heights
+    const grass = this.buildGrass();
+    group.add(grass);
+
     // Vegetation (trees, rocks, flowers)
     const vegetation = this.buildVegetation();
     group.add(vegetation);
@@ -255,6 +263,165 @@ export class ContinuousTerrainBuilder {
   }
 
   /**
+   * Build 3D cobblestone paths along the main paths
+   * Creates individual stone meshes for a charming low-poly look
+   */
+  private buildCobblestonePaths(): THREE.Group {
+    const group = new THREE.Group();
+
+    // Stone materials with color variation
+    const stoneMats = [
+      new THREE.MeshStandardMaterial({ color: 0x7a7a7a, flatShading: true, roughness: 0.9 }),
+      new THREE.MeshStandardMaterial({ color: 0x8a8a8a, flatShading: true, roughness: 0.9 }),
+      new THREE.MeshStandardMaterial({ color: 0x6a6a6a, flatShading: true, roughness: 0.9 }),
+      new THREE.MeshStandardMaterial({ color: 0x9a9a8a, flatShading: true, roughness: 0.9 }),
+    ];
+
+    // Place stones along each path
+    for (const path of this.mainPaths) {
+      for (let i = 0; i < path.length - 1; i++) {
+        const startX = path[i].x;
+        const startZ = path[i].z;
+        const endX = path[i + 1].x;
+        const endZ = path[i + 1].z;
+
+        const segmentLength = Math.sqrt((endX - startX) ** 2 + (endZ - startZ) ** 2);
+        const numStones = Math.floor(segmentLength * 2.5); // ~2.5 stones per unit length
+
+        for (let j = 0; j < numStones; j++) {
+          const t = j / numStones;
+          const baseX = startX + (endX - startX) * t;
+          const baseZ = startZ + (endZ - startZ) * t;
+
+          // Perpendicular offset for path width
+          const dx = endX - startX;
+          const dz = endZ - startZ;
+          const len = Math.sqrt(dx * dx + dz * dz);
+          const perpX = -dz / len;
+          const perpZ = dx / len;
+
+          // Place 2-3 stones across the path width
+          const stonesAcross = 2 + Math.floor(this.rng.next() * 2);
+          for (let k = 0; k < stonesAcross; k++) {
+            const acrossT = (k + 0.5) / stonesAcross - 0.5;
+            const offsetX = perpX * acrossT * this.config.pathWidth * 0.9;
+            const offsetZ = perpZ * acrossT * this.config.pathWidth * 0.9;
+
+            // Add some randomness
+            const stoneX = baseX + offsetX + this.rng.range(-0.2, 0.2);
+            const stoneZ = baseZ + offsetZ + this.rng.range(-0.2, 0.2);
+            const stoneY = this.getHeightAt(stoneX, stoneZ) + 0.08;
+
+            // Create cobblestone - low poly box with random scale
+            const scaleX = this.rng.range(0.25, 0.45);
+            const scaleY = this.rng.range(0.08, 0.15);
+            const scaleZ = this.rng.range(0.25, 0.45);
+
+            const stoneGeo = new THREE.BoxGeometry(scaleX, scaleY, scaleZ);
+            const mat = stoneMats[Math.floor(this.rng.next() * stoneMats.length)];
+            const stone = new THREE.Mesh(stoneGeo, mat);
+
+            stone.position.set(stoneX, stoneY, stoneZ);
+            stone.rotation.y = this.rng.range(0, Math.PI * 2);
+            stone.rotation.x = this.rng.range(-0.1, 0.1);
+            stone.rotation.z = this.rng.range(-0.1, 0.1);
+            stone.receiveShadow = true;
+
+            group.add(stone);
+          }
+        }
+      }
+    }
+
+    return group;
+  }
+
+  /**
+   * Build grass blades of varying heights scattered across the terrain
+   * Creates clusters of low-poly grass for a lush, cozy feel
+   */
+  private buildGrass(): THREE.Group {
+    const group = new THREE.Group();
+    const { worldSize, clearingRadius } = this.config;
+    const halfSize = worldSize / 2;
+
+    // Grass materials with color variation
+    const grassMats = [
+      new THREE.MeshStandardMaterial({ color: 0x4a9e4a, flatShading: true, side: THREE.DoubleSide }),
+      new THREE.MeshStandardMaterial({ color: 0x3d8e3d, flatShading: true, side: THREE.DoubleSide }),
+      new THREE.MeshStandardMaterial({ color: 0x5aae5a, flatShading: true, side: THREE.DoubleSide }),
+      new THREE.MeshStandardMaterial({ color: 0x4a8e3a, flatShading: true, side: THREE.DoubleSide }),
+    ];
+
+    // Spawn grass in clusters across the terrain
+    const gridStep = 3; // Dense grass placement
+
+    for (let z = -halfSize + gridStep; z < halfSize; z += gridStep) {
+      for (let x = -halfSize + gridStep; x < halfSize; x += gridStep) {
+        const jx = x + this.rng.range(-gridStep * 0.4, gridStep * 0.4);
+        const jz = z + this.rng.range(-gridStep * 0.4, gridStep * 0.4);
+
+        const distFromCenter = Math.sqrt(jx * jx + jz * jz);
+
+        // Skip exclusion zones, river, paths
+        if (this.isInExclusionZone(jx, jz) || this.isOnRiver(jx, jz) || this.isOnPath(jx, jz)) continue;
+
+        // Grass density - more in clearing, moderate elsewhere
+        let grassChance = 0;
+        if (distFromCenter < clearingRadius) {
+          grassChance = 0.8; // Lots of grass in the clearing meadow
+        } else {
+          const t = (distFromCenter - clearingRadius) / (halfSize - clearingRadius);
+          grassChance = 0.6 - t * 0.4; // Less grass in forests
+        }
+
+        if (this.rng.next() > grassChance) continue;
+
+        const height = this.getHeightAt(jx, jz);
+
+        // Create a cluster of grass blades
+        const numBlades = Math.floor(this.rng.range(3, 8));
+        const clusterGroup = new THREE.Group();
+
+        for (let i = 0; i < numBlades; i++) {
+          const bladeX = this.rng.range(-0.4, 0.4);
+          const bladeZ = this.rng.range(-0.4, 0.4);
+
+          // Varying blade heights - taller in clearing, shorter in forests
+          let bladeHeight: number;
+          if (distFromCenter < clearingRadius) {
+            bladeHeight = this.rng.range(0.3, 0.8); // Tall meadow grass
+          } else {
+            bladeHeight = this.rng.range(0.15, 0.4); // Short forest grass
+          }
+
+          const bladeWidth = this.rng.range(0.06, 0.12);
+
+          // Grass blade as a thin triangle/cone
+          const bladeGeo = new THREE.ConeGeometry(bladeWidth, bladeHeight, 4);
+          bladeGeo.translate(0, bladeHeight / 2, 0);
+
+          const mat = grassMats[Math.floor(this.rng.next() * grassMats.length)];
+          const blade = new THREE.Mesh(bladeGeo, mat);
+
+          blade.position.set(bladeX, 0, bladeZ);
+          blade.rotation.y = this.rng.range(0, Math.PI * 2);
+          // Slight random tilt for natural look
+          blade.rotation.x = this.rng.range(-0.2, 0.2);
+          blade.rotation.z = this.rng.range(-0.2, 0.2);
+
+          clusterGroup.add(blade);
+        }
+
+        clusterGroup.position.set(jx, height, jz);
+        group.add(clusterGroup);
+      }
+    }
+
+    return group;
+  }
+
+  /**
    * Generate height map with distance-based elevation
    */
   private generateHeightMap(): void {
@@ -295,9 +462,9 @@ export class ContinuousTerrainBuilder {
 
         // Add micro-variation everywhere for ground texture (low-poly bumpiness)
         // High frequency, low amplitude noise that creates visible facets even in flat areas
-        const microNoiseScale = 0.15;
+        const microNoiseScale = 0.12;
         const microNoise = smoothNoise(wx * microNoiseScale, wz * microNoiseScale, worldSeed + 999);
-        const microHeight = (microNoise - 0.5) * 0.4; // +/- 0.2 units of micro bumps
+        const microHeight = (microNoise - 0.5) * 0.8; // +/- 0.4 units of micro bumps for more visible polygons
 
         this.heightMap[z * resolution + x] = Math.max(0, height + microHeight);
       }
@@ -731,13 +898,13 @@ export class ContinuousTerrainBuilder {
         if (this.isInExclusionZone(jx, jz) || this.isOnRiver(jx, jz) || this.isOnPath(jx, jz)) continue;
 
         // Density increases with distance from center
-        // Very sparse in clearing, dense at edges
+        // Some objects in clearing for texture, dense at edges
         let density = 0;
         if (distFromCenter < clearingRadius) {
-          density = 0.05; // Almost nothing in clearing
+          density = 0.25; // More objects in clearing for visual interest
         } else {
           const t = (distFromCenter - clearingRadius) / (halfSize - clearingRadius);
-          density = 0.1 + t * 0.7; // 10% to 80% density
+          density = 0.2 + t * 0.6; // 20% to 80% density
         }
 
         if (this.rng.next() > density) continue;
