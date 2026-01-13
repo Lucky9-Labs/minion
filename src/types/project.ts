@@ -9,6 +9,7 @@ export interface Building {
   stage: BuildingStage;
   level: number; // Height based on merge count
   position: { x: number; z: number };
+  rotation?: number; // Y-axis rotation in radians (for facing street)
 }
 
 export interface Worktree {

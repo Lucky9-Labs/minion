@@ -169,8 +169,6 @@ export function VillageScene({
         <MinionEntity
           key={minion.id}
           minion={{ ...minion, position: { x: position[0], y: position[1], z: position[2] } }}
-          isSelected={false}
-          onClick={() => {}}
         />
       ))}
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useMemo } from 'react';
 import * as THREE from 'three';
 import type { BuildingStage } from '@/types/project';
 
@@ -23,6 +23,33 @@ export function CottageBuilding({
   const baseHeight = 1.5;
   const floorHeight = 0.8;
   const totalHeight = baseHeight + Math.min(level - 1, 3) * floorHeight;
+
+  // Create pitched roof geometry - a triangular prism (gabled roof)
+  const roofGeometry = useMemo(() => {
+    const roofWidth = 2.2;
+    const roofDepth = 2.2;
+    const roofHeight = 1.0;
+
+    // Create roof shape - a simple triangle profile
+    const shape = new THREE.Shape();
+    shape.moveTo(-roofWidth / 2, 0);
+    shape.lineTo(0, roofHeight);
+    shape.lineTo(roofWidth / 2, 0);
+    shape.closePath();
+
+    const extrudeSettings = {
+      depth: roofDepth,
+      bevelEnabled: false,
+    };
+
+    const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+    // Rotate so ridge runs front to back (along Z)
+    geo.rotateX(-Math.PI / 2);
+    // Center over building
+    geo.translate(0, 0, roofDepth / 2);
+
+    return geo;
+  }, []);
 
   const stageOpacity = {
     planning: 0.3,
@@ -57,16 +84,16 @@ export function CottageBuilding({
         </mesh>
       )}
 
-      {/* Roof */}
+      {/* Roof - pitched/gabled style */}
       {showRoof && (
         <mesh
-          position={[0, totalHeight + 0.7, 0]}
-          rotation={[0, Math.PI / 4, 0]}
+          position={[0, totalHeight + 0.2, -1.1]}
+          geometry={roofGeometry}
           castShadow
         >
-          <coneGeometry args={[1.6, 1, 4]} />
           <meshStandardMaterial
             color="#8B4513"
+            flatShading
             transparent
             opacity={stage === 'scaffolding' ? 0.5 : opacity}
           />

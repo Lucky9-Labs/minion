@@ -24,52 +24,66 @@ interface ProjectStore {
   ) => void;
 }
 
-// Position buildings in a spiral pattern around center
+// Village grid configuration - "Diagon Alley" style
+const VILLAGE_CONFIG = {
+  mainStreetWidth: 3.5,      // Width of main cobblestone street
+  buildingSpacing: 12,       // Distance between building centers along street
+  buildingSetback: 8,        // Distance from street center to building center
+  maxBuildingsPerSide: 5,    // Before creating second row
+  rowSpacing: 16,            // Distance between rows of buildings
+};
+
+// Position buildings in a village street grid
 function calculateBuildingPositions(projects: ChaudProject[]): ChaudProject[] {
-  const spacing = 8;
+  const { buildingSpacing, buildingSetback, maxBuildingsPerSide, rowSpacing } = VILLAGE_CONFIG;
+
   const centerProject = projects.find((p) => p.name === 'minion');
   const otherProjects = projects.filter((p) => p.name !== 'minion');
 
   const positioned: ChaudProject[] = [];
 
-  // Minion project at center
+  // Minion project (main cottage) at center, facing south (toward the village)
   if (centerProject) {
     positioned.push({
       ...centerProject,
       building: {
         ...centerProject.building,
         position: { x: 0, z: 0 },
+        rotation: 0, // Facing south along main street
       },
     });
   }
 
-  // Spiral other projects around center
-  let angle = 0;
-  let radius = spacing;
-  const angleIncrement = Math.PI / 3; // 60 degrees
-  let projectsAtCurrentRadius = 0;
-  const projectsPerRing = 6;
+  // Arrange other projects along the main street
+  // Buildings alternate: left side, right side
+  // Each side faces inward toward the street
+  for (let i = 0; i < otherProjects.length; i++) {
+    const project = otherProjects[i];
 
-  for (const project of otherProjects) {
-    const x = Math.cos(angle) * radius;
-    const z = Math.sin(angle) * radius;
+    const isLeftSide = i % 2 === 0;
+    const pairIndex = Math.floor(i / 2);
+    const rowIndex = Math.floor(pairIndex / maxBuildingsPerSide);
+    const positionInRow = pairIndex % maxBuildingsPerSide;
+
+    // Calculate position along street (Z-axis, going south/positive Z)
+    const z = buildingSpacing * (positionInRow + 1) + (rowIndex * rowSpacing * 2);
+
+    // Calculate position perpendicular to street (X-axis)
+    // Additional row offset for buildings in second+ rows
+    const xOffset = rowIndex > 0 ? rowSpacing : 0;
+    const x = (buildingSetback + xOffset) * (isLeftSide ? -1 : 1);
+
+    // Rotation: left side buildings face right (toward street), right side face left
+    const rotation = isLeftSide ? -Math.PI / 2 : Math.PI / 2;
 
     positioned.push({
       ...project,
       building: {
         ...project.building,
         position: { x, z },
+        rotation,
       },
     });
-
-    angle += angleIncrement;
-    projectsAtCurrentRadius++;
-
-    if (projectsAtCurrentRadius >= projectsPerRing) {
-      radius += spacing;
-      projectsAtCurrentRadius = 0;
-      angle = radius * 0.1; // Slight offset for each ring
-    }
   }
 
   return positioned;
@@ -133,7 +147,7 @@ export const useProjectStore = create<ProjectStore>()(
           // Generate aesthetics for projects that don't have one
           for (const project of positioned) {
             if (!project.building.aesthetic && project.name !== 'minion') {
-              get().generateAestheticForProject(project);
+              generateAestheticForProject(project);
             }
           }
         } catch (error) {
@@ -221,13 +235,3 @@ async function generateAestheticForProject(project: ChaudProject) {
   }
 }
 
-// Add the method to the store type
-declare module 'zustand' {
-  interface StoreMutatorIdentifier {
-    generateAestheticForProject: typeof generateAestheticForProject;
-  }
-}
-
-// Patch the store with the method
-(useProjectStore.getState() as unknown as Record<string, unknown>).generateAestheticForProject =
-  generateAestheticForProject;
