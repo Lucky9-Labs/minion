@@ -481,3 +481,18 @@ src/
 - `src/components/SimpleScene.tsx` - Integrated all systems
 - `src/components/GameLayout.tsx` - Added ConversationPanel, hides UI during conversation
 - `src/components/MinionEntity.tsx` - Added `conversing` color
+
+### Testing Results (Browser Verified)
+- ✅ Clicking minion triggers conversation mode
+- ✅ Phase transitions from 'entering' to 'active' correctly
+- ✅ Conversation UI shows with minion name and dialog
+- ✅ "Leave Conversation" button works when in 'active' phase
+- ✅ Escape key exits conversation when in 'active' phase
+- ✅ Camera returns to isometric view after exiting
+- ✅ UI panels hide during conversation, show after exit
+- ✅ Minion state changes to 'conversing' and back to 'idle'
+- ✅ Wizard teleport effects play on enter/exit
+
+### Known Issues / Future Polish
+- Camera framing during conversation can sometimes position camera in suboptimal locations (e.g., near cottage walls)
+- Spring arm collision avoidance may need tuning for edge cases

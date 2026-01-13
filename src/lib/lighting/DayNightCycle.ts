@@ -17,11 +17,11 @@ export interface DayNightConfig {
 }
 
 export const DEFAULT_DAY_NIGHT_CONFIG: DayNightConfig = {
-  cycleDuration: 120, // 2 minute full day cycle
+  cycleDuration: 300, // 5 minute full day cycle (slower)
   sunOrbitRadius: 50,
   sunHeight: 40,
-  shadowMapSize: 512, // Low res for pixelated shadows
-  shadowFrustum: 60,
+  shadowMapSize: 256, // Very low res for performance (was 512)
+  shadowFrustum: 50,  // Smaller frustum
 };
 
 /**
@@ -38,15 +38,29 @@ const SKY_COLORS = {
 
 /**
  * Ambient light colors/intensities for different times
- * Lower during day so directional sun creates visible facets, higher at night
+ * Higher ambient = more diffuse, softer shadows
  */
 const AMBIENT_SETTINGS = {
-  dawn: { color: 0xffd4a6, intensity: 0.2 },
-  morning: { color: 0xffffff, intensity: 0.2 },
-  noon: { color: 0xffffff, intensity: 0.15 }, // Very low so sun dominates
-  afternoon: { color: 0xfff8e7, intensity: 0.2 },
-  dusk: { color: 0xffa07a, intensity: 0.25 },
-  night: { color: 0x4a6080, intensity: 0.3 }, // Blue moonlight, brighter
+  dawn: { color: 0xffd4a6, intensity: 0.4 },    // Soft diffuse dawn light
+  morning: { color: 0xffffff, intensity: 0.35 },
+  noon: { color: 0xffffff, intensity: 0.3 },     // Still some ambient even at noon
+  afternoon: { color: 0xfff8e7, intensity: 0.35 },
+  dusk: { color: 0xffa07a, intensity: 0.45 },    // Very diffuse at dusk
+  night: { color: 0x4a6080, intensity: 0.5 },    // High ambient for soft moonlight
+};
+
+/**
+ * Shadow softness settings for different times
+ * Higher radius = softer shadows (but more GPU expensive)
+ * Keep values low (1-3) for performance
+ */
+const SHADOW_SETTINGS = {
+  dawn: { radius: 2, intensity: 0.6 },
+  morning: { radius: 1, intensity: 0.75 },
+  noon: { radius: 1, intensity: 0.9 },      // Sharp shadows at noon
+  afternoon: { radius: 1, intensity: 0.75 },
+  dusk: { radius: 2, intensity: 0.5 },
+  night: { radius: 2, intensity: 0.3 },     // Slightly soft moon shadows
 };
 
 /**
@@ -113,16 +127,17 @@ export class DayNightCycle {
     this.sunLight.shadow.camera.top = config.shadowFrustum;
     this.sunLight.shadow.camera.bottom = -config.shadowFrustum;
 
-    // Sharper shadow edges for low-poly look
+    // Hard shadows for performance (no PCF blur)
     this.sunLight.shadow.bias = -0.001;
     this.sunLight.shadow.normalBias = 0.02;
+    this.sunLight.shadow.radius = 1; // Hard shadows - no expensive PCF
 
     scene.add(this.sunLight);
     scene.add(this.sunLight.target);
 
-    // Create moon directional light (very faint for subtle night shadows)
+    // Create moon directional light (no shadows - too expensive)
     this.moonLight = new THREE.DirectionalLight(0x6688aa, 0.3);
-    this.moonLight.castShadow = true;
+    this.moonLight.castShadow = false; // Disabled for performance
 
     // Configure moon shadow map (smaller than sun for performance)
     this.moonLight.shadow.mapSize.width = config.shadowMapSize / 2;
@@ -135,6 +150,7 @@ export class DayNightCycle {
     this.moonLight.shadow.camera.bottom = -config.shadowFrustum;
     this.moonLight.shadow.bias = -0.001;
     this.moonLight.shadow.normalBias = 0.02;
+    this.moonLight.shadow.radius = 12; // Very soft moon shadows
 
     scene.add(this.moonLight);
     scene.add(this.moonLight.target);
@@ -199,6 +215,8 @@ export class DayNightCycle {
     const sun = this.getSunSettings();
     this.sunLight.color.setHex(sun.color);
     this.sunLight.intensity = Math.max(0, sun.intensity * Math.max(0, sunY / this.config.sunHeight));
+
+    // Shadow radius is fixed at 1 for performance (hard shadows)
 
     // Sun mesh color based on time
     const sunVisualColor = sunY > 0
@@ -273,6 +291,14 @@ export class DayNightCycle {
   private getSunSettings(): { color: number; intensity: number } {
     const period = this.getTimePeriod();
     return SUN_SETTINGS[period];
+  }
+
+  /**
+   * Get shadow settings for current time (softer at dawn/dusk/night)
+   */
+  private getShadowSettings(): { radius: number; intensity: number } {
+    const period = this.getTimePeriod();
+    return SHADOW_SETTINGS[period];
   }
 
   /**

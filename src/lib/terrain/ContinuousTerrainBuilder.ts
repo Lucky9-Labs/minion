@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { ContinuousTerrainConfig, PathNode, RiverSegment } from './types';
+import type { ContinuousTerrainConfig, PathNode, RiverSegment, BridgeCrossing } from './types';
 import { DEFAULT_CONTINUOUS_CONFIG, BIOME_TREE_CONFIG } from './types';
 
 /**
@@ -87,6 +87,7 @@ export class ContinuousTerrainBuilder {
   private heightMap: Float32Array;
   private riverPath: RiverSegment[] = [];
   private mainPaths: PathNode[][] = [];
+  private bridgeCrossings: BridgeCrossing[] = [];
 
   constructor(config: ContinuousTerrainConfig = DEFAULT_CONTINUOUS_CONFIG) {
     this.config = config;
@@ -97,6 +98,7 @@ export class ContinuousTerrainBuilder {
     this.generateHeightMap();
     this.generateRiver();
     this.generatePaths();
+    this.findBridgeCrossings(); // Find where paths cross water
     this.carveRiverAndPaths();
   }
 
@@ -129,6 +131,10 @@ export class ContinuousTerrainBuilder {
     // Dynamic features
     const features = this.buildDynamicFeatures();
     group.add(features);
+
+    // Log bridges at path-river crossings
+    const bridges = this.buildLogBridges();
+    group.add(bridges);
 
     return group;
   }
@@ -337,79 +343,54 @@ export class ContinuousTerrainBuilder {
   }
 
   /**
-   * Build grass blades of varying heights scattered across the terrain
-   * Creates clusters of low-poly grass for a lush, cozy feel
+   * Build sparse grass tufts - heavily optimized for performance
+   * Uses MeshBasicMaterial (no lighting) and minimal geometry
    */
   private buildGrass(): THREE.Group {
     const group = new THREE.Group();
     const { worldSize, clearingRadius } = this.config;
     const halfSize = worldSize / 2;
 
-    // Grass materials with color variation
-    const grassMats = [
-      new THREE.MeshStandardMaterial({ color: 0x4a9e4a, flatShading: true, side: THREE.DoubleSide }),
-      new THREE.MeshStandardMaterial({ color: 0x3d8e3d, flatShading: true, side: THREE.DoubleSide }),
-      new THREE.MeshStandardMaterial({ color: 0x5aae5a, flatShading: true, side: THREE.DoubleSide }),
-      new THREE.MeshStandardMaterial({ color: 0x4a8e3a, flatShading: true, side: THREE.DoubleSide }),
-    ];
+    // Single cheap material - no lighting calculations
+    const grassMat = new THREE.MeshBasicMaterial({
+      color: 0x4a9e4a,
+      side: THREE.DoubleSide
+    });
 
-    // Spawn grass in clusters across the terrain
-    const gridStep = 3; // Dense grass placement
+    // Very sparse grass - only in clearing area for accent
+    const gridStep = 8; // Much sparser (was 3)
 
     for (let z = -halfSize + gridStep; z < halfSize; z += gridStep) {
       for (let x = -halfSize + gridStep; x < halfSize; x += gridStep) {
-        const jx = x + this.rng.range(-gridStep * 0.4, gridStep * 0.4);
-        const jz = z + this.rng.range(-gridStep * 0.4, gridStep * 0.4);
+        const jx = x + this.rng.range(-gridStep * 0.3, gridStep * 0.3);
+        const jz = z + this.rng.range(-gridStep * 0.3, gridStep * 0.3);
 
         const distFromCenter = Math.sqrt(jx * jx + jz * jz);
 
-        // Skip exclusion zones, river, paths
+        // Only grass in the clearing meadow area
+        if (distFromCenter > clearingRadius * 1.2) continue;
         if (this.isInExclusionZone(jx, jz) || this.isOnRiver(jx, jz) || this.isOnPath(jx, jz)) continue;
-
-        // Grass density - more in clearing, moderate elsewhere
-        let grassChance = 0;
-        if (distFromCenter < clearingRadius) {
-          grassChance = 0.8; // Lots of grass in the clearing meadow
-        } else {
-          const t = (distFromCenter - clearingRadius) / (halfSize - clearingRadius);
-          grassChance = 0.6 - t * 0.4; // Less grass in forests
-        }
-
-        if (this.rng.next() > grassChance) continue;
+        if (this.rng.next() > 0.5) continue; // 50% chance
 
         const height = this.getHeightAt(jx, jz);
 
-        // Create a cluster of grass blades
-        const numBlades = Math.floor(this.rng.range(3, 8));
+        // Single grass tuft (just 2-3 blades)
+        const numBlades = 2 + Math.floor(this.rng.next() * 2);
         const clusterGroup = new THREE.Group();
 
         for (let i = 0; i < numBlades; i++) {
-          const bladeX = this.rng.range(-0.4, 0.4);
-          const bladeZ = this.rng.range(-0.4, 0.4);
-
-          // Varying blade heights - taller in clearing, shorter in forests
-          let bladeHeight: number;
-          if (distFromCenter < clearingRadius) {
-            bladeHeight = this.rng.range(0.3, 0.8); // Tall meadow grass
-          } else {
-            bladeHeight = this.rng.range(0.15, 0.4); // Short forest grass
-          }
-
-          const bladeWidth = this.rng.range(0.06, 0.12);
-
-          // Grass blade as a thin triangle/cone
-          const bladeGeo = new THREE.ConeGeometry(bladeWidth, bladeHeight, 4);
+          const bladeHeight = this.rng.range(0.3, 0.6);
+          const bladeGeo = new THREE.ConeGeometry(0.08, bladeHeight, 3); // 3 segments = triangle
           bladeGeo.translate(0, bladeHeight / 2, 0);
 
-          const mat = grassMats[Math.floor(this.rng.next() * grassMats.length)];
-          const blade = new THREE.Mesh(bladeGeo, mat);
-
-          blade.position.set(bladeX, 0, bladeZ);
+          const blade = new THREE.Mesh(bladeGeo, grassMat);
+          blade.position.set(
+            this.rng.range(-0.3, 0.3),
+            0,
+            this.rng.range(-0.3, 0.3)
+          );
           blade.rotation.y = this.rng.range(0, Math.PI * 2);
-          // Slight random tilt for natural look
-          blade.rotation.x = this.rng.range(-0.2, 0.2);
-          blade.rotation.z = this.rng.range(-0.2, 0.2);
-
+          // No shadows on grass
           clusterGroup.add(blade);
         }
 
@@ -582,6 +563,157 @@ export class ContinuousTerrainBuilder {
 
       this.mainPaths.push(path);
     }
+  }
+
+  /**
+   * Find where paths cross the river and store bridge crossing points
+   */
+  private findBridgeCrossings(): void {
+    // Check each path segment against each river segment for intersections
+    for (let pathIndex = 0; pathIndex < this.mainPaths.length; pathIndex++) {
+      const path = this.mainPaths[pathIndex];
+
+      for (let i = 0; i < path.length - 1; i++) {
+        const pathStart = { x: path[i].x, z: path[i].z };
+        const pathEnd = { x: path[i + 1].x, z: path[i + 1].z };
+
+        for (const riverSeg of this.riverPath) {
+          const intersection = this.lineIntersection(
+            pathStart.x, pathStart.z, pathEnd.x, pathEnd.z,
+            riverSeg.start.x, riverSeg.start.z, riverSeg.end.x, riverSeg.end.z
+          );
+
+          if (intersection) {
+            // Calculate river direction at this point
+            const riverDx = riverSeg.end.x - riverSeg.start.x;
+            const riverDz = riverSeg.end.z - riverSeg.start.z;
+            const riverAngle = Math.atan2(riverDz, riverDx);
+
+            // Bridge angle is perpendicular to river (aligned with path crossing)
+            const bridgeAngle = riverAngle + Math.PI / 2;
+
+            this.bridgeCrossings.push({
+              x: intersection.x,
+              z: intersection.z,
+              angle: bridgeAngle,
+              width: riverSeg.width,
+              pathIndex
+            });
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Line segment intersection check
+   * Returns intersection point or null if no intersection
+   */
+  private lineIntersection(
+    x1: number, z1: number, x2: number, z2: number,
+    x3: number, z3: number, x4: number, z4: number
+  ): { x: number; z: number } | null {
+    const denom = (x1 - x2) * (z3 - z4) - (z1 - z2) * (x3 - x4);
+    if (Math.abs(denom) < 0.0001) return null; // Parallel lines
+
+    const t = ((x1 - x3) * (z3 - z4) - (z1 - z3) * (x3 - x4)) / denom;
+    const u = -((x1 - x2) * (z1 - z3) - (z1 - z2) * (x1 - x3)) / denom;
+
+    // Check if intersection is within both segments
+    if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+      return {
+        x: x1 + t * (x2 - x1),
+        z: z1 + t * (z2 - z1)
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Build log bridges at path-river crossing points
+   * Creates multiple logs laid side by side for walkable bridges
+   */
+  private buildLogBridges(): THREE.Group {
+    const group = new THREE.Group();
+
+    const logMat = new THREE.MeshStandardMaterial({
+      color: 0x5d4037,
+      flatShading: true,
+      roughness: 0.85,
+    });
+
+    const darkLogMat = new THREE.MeshStandardMaterial({
+      color: 0x4a3729,
+      flatShading: true,
+      roughness: 0.9,
+    });
+
+    for (const crossing of this.bridgeCrossings) {
+      const bridgeGroup = new THREE.Group();
+
+      // Bridge needs to span the river width plus some bank overlap
+      const bridgeLength = crossing.width * 1.8;
+      const numLogs = 4 + Math.floor(this.rng.next() * 3); // 4-6 logs
+      const logSpacing = this.config.pathWidth / numLogs;
+
+      for (let i = 0; i < numLogs; i++) {
+        // Offset each log across the path width
+        const lateralOffset = (i - (numLogs - 1) / 2) * logSpacing;
+
+        // Log dimensions with some variety
+        const logRadius = 0.15 + this.rng.range(0, 0.08);
+        const logLength = bridgeLength + this.rng.range(-0.5, 0.5);
+
+        const logGeo = new THREE.CylinderGeometry(logRadius, logRadius * 1.1, logLength, 6);
+        const mat = this.rng.chance(0.3) ? darkLogMat : logMat;
+        const log = new THREE.Mesh(logGeo, mat);
+
+        // Rotate to lay flat and align with bridge direction
+        log.rotation.z = Math.PI / 2;
+
+        // Position along the crossing direction (perpendicular offset)
+        const perpX = Math.sin(crossing.angle) * lateralOffset;
+        const perpZ = -Math.cos(crossing.angle) * lateralOffset;
+
+        log.position.set(perpX, logRadius * 0.8, perpZ);
+
+        // Slight random rotation for natural look
+        log.rotation.x += this.rng.range(-0.05, 0.05);
+        log.rotation.y += this.rng.range(-0.1, 0.1);
+
+        log.castShadow = true;
+        log.receiveShadow = true;
+        bridgeGroup.add(log);
+      }
+
+      // Add support posts on the banks
+      const postMat = new THREE.MeshStandardMaterial({
+        color: 0x3e2723,
+        flatShading: true,
+      });
+
+      for (let side = -1; side <= 1; side += 2) {
+        const postDist = crossing.width * 0.6;
+        const postX = Math.cos(crossing.angle) * postDist * side;
+        const postZ = Math.sin(crossing.angle) * postDist * side;
+
+        const postGeo = new THREE.CylinderGeometry(0.12, 0.15, 1.0, 5);
+        const post = new THREE.Mesh(postGeo, postMat);
+        post.position.set(postX, 0.2, postZ);
+        post.rotation.x = this.rng.range(-0.1, 0.1);
+        post.rotation.z = this.rng.range(-0.1, 0.1);
+        post.castShadow = true;
+        bridgeGroup.add(post);
+      }
+
+      // Position the whole bridge
+      bridgeGroup.position.set(crossing.x, -0.1, crossing.z);
+      bridgeGroup.rotation.y = crossing.angle;
+
+      group.add(bridgeGroup);
+    }
+
+    return group;
   }
 
   /**
@@ -914,13 +1046,23 @@ export class ContinuousTerrainBuilder {
         // What to spawn based on distance and randomness
         const roll = this.rng.next();
 
-        if (roll < 0.6) {
-          // Tree
+        if (roll < 0.55) {
+          // Tree (most common)
           const tree = this.buildTree(distFromCenter);
           tree.position.set(jx, height, jz);
           group.add(tree);
-        } else if (roll < 0.8) {
-          // Rock
+        } else if (roll < 0.65) {
+          // Bush cluster (reduced - expensive)
+          const bush = this.buildBush();
+          bush.position.set(jx, height, jz);
+          group.add(bush);
+        } else if (roll < 0.72) {
+          // Rock cluster (reduced - expensive)
+          const rock = this.buildRockCluster(height);
+          rock.position.set(jx, height, jz);
+          group.add(rock);
+        } else if (roll < 0.88) {
+          // Single rock (cheap)
           const rock = this.buildRock(height);
           rock.position.set(jx, height, jz);
           group.add(rock);
@@ -996,27 +1138,32 @@ export class ContinuousTerrainBuilder {
 
   /**
    * Build a single tree with size based on distance from center
+   * Trees are significantly taller for a more impressive forest feel
    */
   private buildTree(distFromCenter: number): THREE.Group {
     const group = new THREE.Group();
 
-    // Trees get bigger further from center
-    const baseScale = 0.6 + (distFromCenter / (this.config.worldSize / 2)) * 0.8;
-    const scale = baseScale * this.rng.range(0.8, 1.2);
+    // Trees get much bigger further from center - enhanced scale for taller trees
+    const baseScale = 1.2 + (distFromCenter / (this.config.worldSize / 2)) * 1.5;
+    const scale = baseScale * this.rng.range(0.7, 1.4);
 
-    // Tree type varies with distance
-    const isConiferArea = distFromCenter > this.config.clearingRadius * 2;
+    // Tree type varies with distance - more variety
+    const isConiferArea = distFromCenter > this.config.clearingRadius * 1.5;
+    const isGiantTree = this.rng.chance(0.15); // 15% chance for extra tall tree
 
-    // Trunk - low poly (4 segments = square-ish)
-    const trunkHeight = (isConiferArea ? 3 : 2.5) * scale;
+    // Giant trees are 50% taller
+    const heightMultiplier = isGiantTree ? 1.5 : 1.0;
+
+    // Trunk - low poly (4-6 segments)
+    const trunkHeight = (isConiferArea ? 4.5 : 3.5) * scale * heightMultiplier;
     const trunkGeo = new THREE.CylinderGeometry(
-      0.15 * scale,
-      0.25 * scale,
+      0.18 * scale,
+      0.35 * scale,
       trunkHeight,
-      4 // Low poly
+      isConiferArea ? 6 : 4 // Slightly more detail for conifers
     );
     const trunkMat = new THREE.MeshStandardMaterial({
-      color: isConiferArea ? 0x5d4037 : 0x795548,
+      color: isConiferArea ? 0x4a3728 : 0x6d4c41,
       flatShading: true,
     });
     const trunk = new THREE.Mesh(trunkGeo, trunkMat);
@@ -1024,27 +1171,64 @@ export class ContinuousTerrainBuilder {
     trunk.castShadow = true;
     group.add(trunk);
 
-    // Foliage
+    // Foliage colors with more variety
+    const foliageColors = isConiferArea
+      ? [0x1b5e20, 0x2e7d32, 0x388e3c, 0x1a472a]
+      : [0x33691e, 0x43a047, 0x4caf50, 0x558b2f];
+    const foliageColor = foliageColors[Math.floor(this.rng.next() * foliageColors.length)];
+
     const foliageMat = new THREE.MeshStandardMaterial({
-      color: isConiferArea ? 0x2e7d32 : 0x43a047,
+      color: foliageColor,
       flatShading: true,
     });
 
     if (isConiferArea) {
-      // Conifer - single cone for performance
-      const coneGeo = new THREE.ConeGeometry(0.9 * scale, 2.5 * scale, 5); // 5 segments
-      const cone = new THREE.Mesh(coneGeo, foliageMat);
-      cone.position.y = trunkHeight + 1.2 * scale;
-      cone.castShadow = true;
-      group.add(cone);
+      // Conifer - stacked cones for taller, more impressive pine trees
+      const numLayers = isGiantTree ? 4 : 3;
+      for (let i = 0; i < numLayers; i++) {
+        const layerScale = 1 - (i * 0.2);
+        const coneHeight = (2.0 + i * 0.3) * scale * heightMultiplier * 0.5;
+        const coneRadius = (1.4 - i * 0.3) * scale * layerScale;
+        const coneGeo = new THREE.ConeGeometry(coneRadius, coneHeight, 6);
+        const cone = new THREE.Mesh(coneGeo, foliageMat);
+        cone.position.y = trunkHeight + (i * 1.2 * scale * heightMultiplier * 0.4);
+        cone.castShadow = true;
+        group.add(cone);
+      }
     } else {
-      // Deciduous - icosahedron for low-poly sphere
-      const foliageGeo = new THREE.IcosahedronGeometry(1.0 * scale, 0); // 0 detail = lowest poly
-      const foliage = new THREE.Mesh(foliageGeo, foliageMat);
-      foliage.position.y = trunkHeight + 0.8 * scale;
-      foliage.scale.y = 0.7;
-      foliage.castShadow = true;
-      group.add(foliage);
+      // Deciduous - layered foliage for fuller canopy
+      const numClusters = isGiantTree ? 3 : 2;
+      for (let i = 0; i < numClusters; i++) {
+        const clusterScale = 1 - (i * 0.15);
+        const foliageGeo = new THREE.IcosahedronGeometry(1.3 * scale * clusterScale, 0);
+        const foliage = new THREE.Mesh(foliageGeo, foliageMat);
+        foliage.position.y = trunkHeight + (0.6 + i * 0.8) * scale * heightMultiplier;
+        foliage.position.x = this.rng.range(-0.3, 0.3) * scale;
+        foliage.position.z = this.rng.range(-0.3, 0.3) * scale;
+        foliage.scale.y = 0.75;
+        foliage.castShadow = true;
+        group.add(foliage);
+      }
+    }
+
+    // Add some branches for giant trees
+    if (isGiantTree && !isConiferArea) {
+      const branchMat = new THREE.MeshStandardMaterial({
+        color: 0x5d4037,
+        flatShading: true,
+      });
+      for (let i = 0; i < 3; i++) {
+        const branchAngle = (i / 3) * Math.PI * 2 + this.rng.range(-0.3, 0.3);
+        const branchGeo = new THREE.CylinderGeometry(0.06 * scale, 0.1 * scale, 1.5 * scale, 4);
+        const branch = new THREE.Mesh(branchGeo, branchMat);
+        branch.position.y = trunkHeight * 0.6;
+        branch.position.x = Math.cos(branchAngle) * 0.3 * scale;
+        branch.position.z = Math.sin(branchAngle) * 0.3 * scale;
+        branch.rotation.z = Math.PI / 3;
+        branch.rotation.y = branchAngle;
+        branch.castShadow = true;
+        group.add(branch);
+      }
     }
 
     return group;
@@ -1074,8 +1258,94 @@ export class ContinuousTerrainBuilder {
       this.rng.next() * Math.PI * 2,
       this.rng.next() * 0.5
     );
-    rock.castShadow = true;
+    // No shadows on single rocks
     group.add(rock);
+
+    return group;
+  }
+
+  /**
+   * Build a cluster of rocks (boulder pile)
+   */
+  private buildRockCluster(height: number): THREE.Group {
+    const group = new THREE.Group();
+    const numRocks = 2 + Math.floor(this.rng.next() * 3); // 2-4 rocks (reduced from 3-7)
+
+    // Single material for all rocks in cluster (performance)
+    const color = height > 4 ? 0x5a5a5a : 0x757575;
+    const rockMat = new THREE.MeshStandardMaterial({
+      color,
+      flatShading: true,
+      roughness: 0.95,
+    });
+
+    for (let i = 0; i < numRocks; i++) {
+      const scale = this.rng.range(0.25, 0.7);
+
+      // Use dodecahedron for all (consistent, good rock shape)
+      const rockGeo = new THREE.DodecahedronGeometry(scale, 0);
+      const rock = new THREE.Mesh(rockGeo, rockMat);
+
+      // Position in cluster
+      const angle = (i / numRocks) * Math.PI * 2 + this.rng.range(-0.5, 0.5);
+      const dist = this.rng.range(0.1, 0.6);
+      rock.position.set(
+        Math.cos(angle) * dist,
+        scale * 0.3,
+        Math.sin(angle) * dist
+      );
+
+      rock.scale.y = this.rng.range(0.5, 0.8);
+      rock.rotation.y = this.rng.next() * Math.PI * 2;
+      // No shadows on small rocks
+      group.add(rock);
+    }
+
+    return group;
+  }
+
+  /**
+   * Build a bush (leafy shrub)
+   */
+  private buildBush(): THREE.Group {
+    const group = new THREE.Group();
+    const baseScale = this.rng.range(0.6, 1.2);
+
+    // Bush foliage colors
+    const bushColors = [0x2d5a27, 0x3d6b37, 0x4a7a44, 0x2a4f24, 0x3e6838];
+    const mainColor = bushColors[Math.floor(this.rng.next() * bushColors.length)];
+
+    // Create 2-3 overlapping spheres (reduced from 3-6 for performance)
+    const numClusters = 2 + Math.floor(this.rng.next() * 2);
+
+    const bushMat = new THREE.MeshStandardMaterial({
+      color: mainColor,
+      flatShading: true,
+      roughness: 0.85,
+    });
+
+    for (let i = 0; i < numClusters; i++) {
+      const clusterScale = baseScale * this.rng.range(0.6, 1.0);
+
+      // Use icosahedron for low-poly leafy look
+      const bushGeo = new THREE.IcosahedronGeometry(clusterScale * 0.6, 0);
+      const bush = new THREE.Mesh(bushGeo, bushMat);
+
+      // Position clusters to form bush shape
+      const angle = (i / numClusters) * Math.PI * 2;
+      const dist = this.rng.range(0.1, 0.3) * baseScale;
+      const heightOffset = this.rng.range(0.3, 0.6) * baseScale;
+
+      bush.position.set(
+        Math.cos(angle) * dist,
+        heightOffset,
+        Math.sin(angle) * dist
+      );
+
+      bush.scale.y = this.rng.range(0.6, 0.9);
+      // No shadows on bushes - too expensive
+      group.add(bush);
+    }
 
     return group;
   }
@@ -1285,6 +1555,66 @@ export class ContinuousTerrainBuilder {
     const projZ = z1 + t * dz;
 
     return Math.sqrt((px - projX) ** 2 + (pz - projZ) ** 2);
+  }
+
+  /**
+   * Get all bridge crossings for pathfinding
+   */
+  getBridgeCrossings(): BridgeCrossing[] {
+    return this.bridgeCrossings;
+  }
+
+  /**
+   * Get all paths for pathfinding
+   */
+  getPaths(): PathNode[][] {
+    return this.mainPaths;
+  }
+
+  /**
+   * Get river segments for collision detection
+   */
+  getRiverPath(): RiverSegment[] {
+    return this.riverPath;
+  }
+
+  /**
+   * Check if a position is walkable (not in deep water without a bridge)
+   */
+  isWalkable(x: number, z: number): boolean {
+    // Check if on river
+    const riverDist = this.getDistanceToRiver(x, z);
+    if (riverDist < this.config.riverWidth * 0.5) {
+      // In river - only walkable if near a bridge
+      for (const crossing of this.bridgeCrossings) {
+        const distToBridge = Math.sqrt((x - crossing.x) ** 2 + (z - crossing.z) ** 2);
+        if (distToBridge < crossing.width * 0.8) {
+          return true; // On a bridge
+        }
+      }
+      return false; // In water, no bridge nearby
+    }
+    return true; // Not in river, walkable
+  }
+
+  /**
+   * Find the nearest walkable path point to a position
+   */
+  getNearestPathPoint(x: number, z: number): { x: number; z: number } | null {
+    let nearestDist = Infinity;
+    let nearest: { x: number; z: number } | null = null;
+
+    for (const path of this.mainPaths) {
+      for (const node of path) {
+        const dist = Math.sqrt((x - node.x) ** 2 + (z - node.z) ** 2);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = { x: node.x, z: node.z };
+        }
+      }
+    }
+
+    return nearest;
   }
 
   /**

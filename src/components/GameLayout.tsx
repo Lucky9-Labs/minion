@@ -10,6 +10,9 @@ import { ConversationPanel } from './ui/ConversationPanel';
 import { useGameStore } from '@/store/gameStore';
 import { TOWER_FLOORS } from '@/types/game';
 import { useMinionMovement } from '@/lib/questSimulation';
+import { WowIcon } from './ui/WowIcon';
+import { wowTheme } from '@/styles/theme';
+import { initSoundSettings, preloadSounds, playSound } from '@/lib/sounds';
 
 type ActivePanel = 'minions' | 'quests' | 'vault' | null;
 
@@ -21,11 +24,31 @@ export function GameLayout() {
   const conversation = useGameStore((state) => state.conversation);
   const exitConversation = useGameStore((state) => state.exitConversation);
 
+  // Initialize sound system
+  useEffect(() => {
+    initSoundSettings();
+    preloadSounds();
+  }, []);
+
   // Animate minion movement during quests
   useMinionMovement();
 
   const togglePanel = (panel: ActivePanel) => {
-    setActivePanel(activePanel === panel ? null : panel);
+    if (activePanel === panel) {
+      playSound('panelClose');
+      setActivePanel(null);
+    } else {
+      playSound('panelOpen');
+      setActivePanel(panel);
+    }
+  };
+
+  const floorColors: Record<string, string> = {
+    library: '#8b5cf6',
+    workshop: wowTheme.colors.goldMid,
+    forge: '#ef4444',
+    observatory: '#06b6d4',
+    default: wowTheme.colors.scout,
   };
 
   // Handle Escape key to exit conversation
@@ -44,7 +67,7 @@ export function GameLayout() {
   const inConversation = conversation.active;
 
   return (
-    <div className="relative w-full h-screen overflow-hidden">
+    <div className="relative w-full h-screen overflow-hidden" style={{ background: wowTheme.colors.bgDarkest }}>
       {/* 3D Scene - z-0 to be below UI overlays */}
       <div className="absolute inset-0 z-0">
         <SimpleScene />
@@ -53,9 +76,26 @@ export function GameLayout() {
       {/* Top bar */}
       <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none">
         <div className="pointer-events-auto">
-          <div className="bg-gray-900/90 backdrop-blur-sm rounded-lg px-4 py-2 border border-gray-700">
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              <span>🏰</span>
+          <div style={{
+            background: `linear-gradient(180deg, ${wowTheme.colors.stoneMid} 0%, ${wowTheme.colors.stoneDark} 100%)`,
+            border: `3px solid ${wowTheme.colors.stoneBorder}`,
+            borderRadius: wowTheme.radius.md,
+            padding: '10px 16px',
+            boxShadow: wowTheme.shadows.panel,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+          }}>
+            <WowIcon name="tower" size="md" glow />
+            <h1 style={{
+              margin: 0,
+              fontSize: wowTheme.fontSizes.xl,
+              fontWeight: 700,
+              color: wowTheme.colors.goldLight,
+              fontFamily: wowTheme.fonts.header,
+              textShadow: wowTheme.shadows.textEmboss,
+              letterSpacing: '1px',
+            }}>
               Mage Tower
             </h1>
           </div>
@@ -63,28 +103,76 @@ export function GameLayout() {
 
         <div className="pointer-events-auto flex items-center gap-3">
           {/* Tower level indicator */}
-          <div className="bg-gray-900/90 backdrop-blur-sm rounded-lg px-4 py-2 border border-gray-700">
-            <div className="flex items-center gap-2">
-              <span className="text-amber-500">⚡</span>
-              <span className="text-white font-medium">Level {tower.level}</span>
-              <span className="text-gray-500 text-sm">
-                ({tower.unlockedFloors.length} floors)
-              </span>
-            </div>
+          <div style={{
+            background: `linear-gradient(180deg, ${wowTheme.colors.stoneMid} 0%, ${wowTheme.colors.stoneDark} 100%)`,
+            border: `3px solid ${wowTheme.colors.stoneBorder}`,
+            borderRadius: wowTheme.radius.md,
+            padding: '8px 14px',
+            boxShadow: wowTheme.shadows.panel,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}>
+            <WowIcon name="xp" size="sm" color={wowTheme.colors.goldMid} glow />
+            <span style={{
+              color: wowTheme.colors.textPrimary,
+              fontWeight: 600,
+              fontSize: wowTheme.fontSizes.sm,
+            }}>
+              Level {tower.level}
+            </span>
+            <span style={{
+              color: wowTheme.colors.textMuted,
+              fontSize: wowTheme.fontSizes.xs,
+            }}>
+              ({tower.unlockedFloors.length} floors)
+            </span>
           </div>
 
           {/* Minion count */}
-          <div className="bg-gray-900/90 backdrop-blur-sm rounded-lg px-4 py-2 border border-gray-700">
-            <div className="flex items-center gap-2">
-              <span>👥</span>
-              <span className="text-white">{minions.length} minions</span>
-            </div>
+          <div style={{
+            background: `linear-gradient(180deg, ${wowTheme.colors.stoneMid} 0%, ${wowTheme.colors.stoneDark} 100%)`,
+            border: `3px solid ${wowTheme.colors.stoneBorder}`,
+            borderRadius: wowTheme.radius.md,
+            padding: '8px 14px',
+            boxShadow: wowTheme.shadows.panel,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}>
+            <WowIcon name="minions" size="sm" color={wowTheme.colors.textSecondary} />
+            <span style={{
+              color: wowTheme.colors.textPrimary,
+              fontWeight: 500,
+              fontSize: wowTheme.fontSizes.sm,
+            }}>
+              {minions.length} minions
+            </span>
           </div>
 
           {/* Active quest indicator */}
           {activeQuestId && (
-            <div className="bg-amber-600/90 backdrop-blur-sm rounded-lg px-4 py-2 border border-amber-500 animate-pulse">
-              <span className="text-white font-medium">Quest Active</span>
+            <div
+              className="animate-border-glow"
+              style={{
+                background: `linear-gradient(180deg, ${wowTheme.colors.goldMid}30 0%, ${wowTheme.colors.goldDark}30 100%)`,
+                border: `3px solid ${wowTheme.colors.goldMid}`,
+                borderRadius: wowTheme.radius.md,
+                padding: '8px 14px',
+                boxShadow: wowTheme.shadows.glow,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              <WowIcon name="quest" size="sm" color={wowTheme.colors.goldLight} glow />
+              <span style={{
+                color: wowTheme.colors.goldLight,
+                fontWeight: 600,
+                fontSize: wowTheme.fontSizes.sm,
+              }}>
+                Quest Active
+              </span>
             </div>
           )}
         </div>
@@ -93,20 +181,20 @@ export function GameLayout() {
       {/* Navigation buttons (hidden during conversation) */}
       <div className={`absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 pointer-events-auto transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <NavButton
-          icon="👥"
+          icon={<WowIcon name="minions" size="lg" color={activePanel === 'minions' ? wowTheme.colors.goldLight : wowTheme.colors.textSecondary} />}
           label="Minions"
           active={activePanel === 'minions'}
           onClick={() => togglePanel('minions')}
         />
         <NavButton
-          icon="⚔️"
+          icon={<WowIcon name="quest" size="lg" color={activePanel === 'quests' ? wowTheme.colors.goldLight : wowTheme.colors.textSecondary} />}
           label="Quests"
           active={activePanel === 'quests'}
           onClick={() => togglePanel('quests')}
           badge={activeQuestId ? '!' : undefined}
         />
         <NavButton
-          icon="📦"
+          icon={<WowIcon name="vault" size="lg" color={activePanel === 'vault' ? wowTheme.colors.goldLight : wowTheme.colors.textSecondary} />}
           label="Vault"
           active={activePanel === 'vault'}
           onClick={() => togglePanel('vault')}
@@ -124,27 +212,42 @@ export function GameLayout() {
 
       {/* Tower floors legend (hidden during conversation) */}
       <div className={`absolute bottom-20 right-4 pointer-events-auto transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-        <div className="bg-gray-900/90 backdrop-blur-sm rounded-lg p-3 border border-gray-700">
-          <h3 className="text-sm font-medium text-gray-400 mb-2">Tower Floors</h3>
-          <div className="space-y-1">
+        <div style={{
+          background: `linear-gradient(180deg, ${wowTheme.colors.stoneMid} 0%, ${wowTheme.colors.stoneDark} 100%)`,
+          border: `3px solid ${wowTheme.colors.stoneBorder}`,
+          borderRadius: wowTheme.radius.md,
+          padding: '12px',
+          boxShadow: wowTheme.shadows.panel,
+        }}>
+          <h3 style={{
+            fontSize: wowTheme.fontSizes.xs,
+            fontWeight: 600,
+            color: wowTheme.colors.goldMid,
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px',
+            marginBottom: '8px',
+            fontFamily: wowTheme.fonts.header,
+          }}>
+            Tower Floors
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
             {tower.unlockedFloors.map((floor) => (
-              <div key={floor} className="flex items-center gap-2 text-sm">
+              <div key={floor} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <div
-                  className="w-3 h-3 rounded-sm"
                   style={{
-                    backgroundColor:
-                      floor === 'library'
-                        ? '#8b5cf6'
-                        : floor === 'workshop'
-                        ? '#f59e0b'
-                        : floor === 'forge'
-                        ? '#ef4444'
-                        : floor === 'observatory'
-                        ? '#06b6d4'
-                        : '#10b981',
+                    width: '12px',
+                    height: '12px',
+                    borderRadius: wowTheme.radius.sm,
+                    background: floorColors[floor] || floorColors.default,
+                    boxShadow: `0 0 4px ${floorColors[floor] || floorColors.default}60`,
                   }}
                 />
-                <span className="text-white">{TOWER_FLOORS[floor].name}</span>
+                <span style={{
+                  color: wowTheme.colors.textPrimary,
+                  fontSize: wowTheme.fontSizes.sm,
+                }}>
+                  {TOWER_FLOORS[floor].name}
+                </span>
               </div>
             ))}
           </div>
@@ -154,12 +257,42 @@ export function GameLayout() {
       {/* Instructions for new users */}
       {minions.length === 0 && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-          <div className="bg-gray-900/95 backdrop-blur-sm rounded-xl p-6 border border-amber-600/50 max-w-md text-center">
-            <h2 className="text-2xl font-bold text-white mb-2">Welcome, Mage!</h2>
-            <p className="text-gray-400 mb-4">
+          <div
+            className="animate-scale-in"
+            style={{
+              background: `linear-gradient(180deg, ${wowTheme.colors.parchmentMid} 0%, ${wowTheme.colors.parchmentDark} 100%)`,
+              border: `3px solid ${wowTheme.colors.goldDark}`,
+              borderRadius: wowTheme.radius.md,
+              padding: '24px',
+              maxWidth: '400px',
+              textAlign: 'center',
+              boxShadow: `${wowTheme.shadows.panelHeavy}, ${wowTheme.shadows.glow}`,
+            }}
+          >
+            <WowIcon name="tower" size="xl" glow className="mb-3" />
+            <h2 style={{
+              color: wowTheme.colors.goldLight,
+              fontSize: wowTheme.fontSizes.xxl,
+              fontWeight: 700,
+              fontFamily: wowTheme.fonts.header,
+              marginBottom: '8px',
+              textShadow: wowTheme.shadows.textEmboss,
+            }}>
+              Welcome, Mage!
+            </h2>
+            <p style={{
+              color: wowTheme.colors.textSecondary,
+              fontSize: wowTheme.fontSizes.md,
+              marginBottom: '16px',
+              lineHeight: 1.5,
+            }}>
               Your tower awaits. Recruit your first minion to begin your journey.
             </p>
-            <p className="text-amber-500 text-sm">
+            <p style={{
+              color: wowTheme.colors.goldMid,
+              fontSize: wowTheme.fontSizes.sm,
+              fontWeight: 500,
+            }}>
               Click "Minions" below to recruit your first helper.
             </p>
           </div>
@@ -176,7 +309,7 @@ export function GameLayout() {
 }
 
 interface NavButtonProps {
-  icon: string;
+  icon: React.ReactNode;
   label: string;
   active: boolean;
   onClick: () => void;
@@ -184,19 +317,79 @@ interface NavButtonProps {
 }
 
 function NavButton({ icon, label, active, onClick, badge }: NavButtonProps) {
+  const handleClick = () => {
+    playSound('buttonClick');
+    onClick();
+  };
+
   return (
     <button
-      onClick={onClick}
-      className={`relative flex flex-col items-center gap-1 px-6 py-3 rounded-lg transition-all ${
-        active
-          ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/30'
-          : 'bg-gray-900/90 text-gray-300 hover:bg-gray-800 border border-gray-700'
-      }`}
+      onClick={handleClick}
+      style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '4px',
+        padding: '12px 24px',
+        borderRadius: wowTheme.radius.md,
+        transition: 'all 200ms ease',
+        cursor: 'pointer',
+        background: active
+          ? `linear-gradient(180deg, ${wowTheme.colors.goldMid} 0%, ${wowTheme.colors.goldDark} 100%)`
+          : `linear-gradient(180deg, ${wowTheme.colors.stoneMid} 0%, ${wowTheme.colors.stoneDark} 100%)`,
+        border: active
+          ? `3px solid ${wowTheme.colors.goldLight}`
+          : `3px solid ${wowTheme.colors.stoneBorder}`,
+        boxShadow: active
+          ? `${wowTheme.shadows.glowStrong}, 0 4px 12px rgba(0,0,0,0.4)`
+          : wowTheme.shadows.panel,
+        color: active ? wowTheme.colors.stoneDark : wowTheme.colors.textSecondary,
+      }}
+      onMouseEnter={(e) => {
+        if (!active) {
+          e.currentTarget.style.borderColor = wowTheme.colors.stoneLight;
+          e.currentTarget.style.transform = 'translateY(-2px)';
+        }
+        playSound('buttonHover', 0.1);
+      }}
+      onMouseLeave={(e) => {
+        if (!active) {
+          e.currentTarget.style.borderColor = wowTheme.colors.stoneBorder;
+          e.currentTarget.style.transform = 'translateY(0)';
+        }
+      }}
     >
-      <span className="text-2xl">{icon}</span>
-      <span className="text-sm font-medium">{label}</span>
+      {icon}
+      <span style={{
+        fontSize: wowTheme.fontSizes.sm,
+        fontWeight: 600,
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px',
+        fontFamily: wowTheme.fonts.header,
+        color: active ? wowTheme.colors.stoneDark : wowTheme.colors.textSecondary,
+        textShadow: active ? '0 1px 0 rgba(255,255,255,0.3)' : 'none',
+      }}>
+        {label}
+      </span>
       {badge && (
-        <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full text-white text-xs flex items-center justify-center">
+        <span style={{
+          position: 'absolute',
+          top: '-4px',
+          right: '-4px',
+          width: '20px',
+          height: '20px',
+          borderRadius: '50%',
+          background: `linear-gradient(180deg, ${wowTheme.colors.danger} 0%, #5a2525 100%)`,
+          border: `2px solid ${wowTheme.colors.stoneDark}`,
+          color: wowTheme.colors.textPrimary,
+          fontSize: wowTheme.fontSizes.xs,
+          fontWeight: 700,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.3)',
+        }}>
           {badge}
         </span>
       )}

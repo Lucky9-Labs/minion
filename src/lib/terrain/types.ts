@@ -86,6 +86,15 @@ export interface PathNode {
   direction: number;  // Angle in radians
 }
 
+// Bridge crossing where a path crosses water
+export interface BridgeCrossing {
+  x: number;
+  z: number;
+  angle: number;      // Orientation of the bridge (perpendicular to river)
+  width: number;      // Width of the river at this point
+  pathIndex: number;  // Which path this crossing belongs to
+}
+
 // Biome color palettes
 export const BIOME_COLORS: Record<BiomeType, {
   grass: number;
