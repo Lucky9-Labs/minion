@@ -747,7 +747,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     const firstPersonHands = new FirstPersonHands();
     firstPersonHands.setVisible(false);
     // Get the perspective camera from camera controller and add hands to it
-    const perspCamera = cameraController.getCamera() as THREE.PerspectiveCamera;
+    // Camera must be in the scene for its children to be rendered
+    const perspCamera = cameraController.getPerspCamera();
+    scene.add(perspCamera);
     perspCamera.add(firstPersonHands.getObject());
     firstPersonHandsRef.current = firstPersonHands;
 
