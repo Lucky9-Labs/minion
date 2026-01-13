@@ -7,6 +7,8 @@ import { QuestPanel } from './ui/QuestPanel';
 import { VaultPanel } from './ui/VaultPanel';
 import { CharacterPanel } from './ui/CharacterPanel';
 import { ConversationPanel } from './ui/ConversationPanel';
+import { WizardProfileFrame } from './ui/WizardProfileFrame';
+import { TargetFrame } from './ui/TargetFrame';
 import { useGameStore } from '@/store/gameStore';
 import { TOWER_FLOORS } from '@/types/game';
 import { useMinionMovement } from '@/lib/questSimulation';
@@ -302,8 +304,43 @@ export function GameLayout() {
       {/* Character panel for selected minion */}
       {!inConversation && <CharacterPanel />}
 
+      {/* Wizard profile frame (bottom-left) - hidden during conversation */}
+      <div className={`transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+        <WizardProfileFrame />
+      </div>
+
+      {/* Target frame for selected minion (top-right) - hidden during conversation */}
+      <div className={`transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+        <TargetFrame />
+      </div>
+
       {/* Conversation panel (shown during minion conversation) */}
       <ConversationPanel />
+
+      {/* CSS animations for frames */}
+      <style jsx global>{`
+        @keyframes fadeSlideIn {
+          from {
+            opacity: 0;
+            transform: translateX(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
+        }
+
+        @keyframes pulse {
+          0%, 100% {
+            opacity: 1;
+            transform: scale(1);
+          }
+          50% {
+            opacity: 0.7;
+            transform: scale(1.1);
+          }
+        }
+      `}</style>
     </div>
   );
 }

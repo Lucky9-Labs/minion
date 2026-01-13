@@ -92,8 +92,17 @@ export interface Tower {
   level: number;
 }
 
+// Wizard (player character) state
+export interface Wizard {
+  name: string;
+  level: number;
+  xp: number;
+  xpToNextLevel: number;
+}
+
 export interface GameState {
   tower: Tower;
+  wizard: Wizard;
   minions: Minion[];
   quests: Quest[];
   artifacts: Artifact[];

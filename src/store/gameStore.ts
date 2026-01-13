@@ -15,6 +15,7 @@ import type {
   ArtifactType,
   ConversationState,
   ConversationPhase,
+  Wizard,
 } from '@/types/game';
 
 function generateId(): string {
@@ -69,6 +70,10 @@ interface GameStore extends GameState {
   setConversationPhase: (phase: ConversationPhase | null) => void;
   transitionToMinion: (minionId: string) => void;
 
+  // Wizard actions
+  setWizardName: (name: string) => void;
+  gainXP: (amount: number) => void;
+
   // Reset
   resetGame: () => void;
 }
@@ -87,11 +92,20 @@ const starterMinion: Minion = {
   createdAt: Date.now(),
 };
 
+// Default wizard state
+const defaultWizard: Wizard = {
+  name: 'Archmage',
+  level: 1,
+  xp: 0,
+  xpToNextLevel: 100,
+};
+
 const initialState: GameState = {
   tower: {
     unlockedFloors: ['library'],
     level: 1,
   },
+  wizard: defaultWizard,
   minions: [starterMinion],
   quests: [],
   artifacts: [],
@@ -386,6 +400,37 @@ export const useGameStore = create<GameStore>()(
         });
       },
 
+      setWizardName: (name) => {
+        set((state) => ({
+          wizard: { ...state.wizard, name },
+        }));
+      },
+
+      gainXP: (amount) => {
+        set((state) => {
+          let newXP = state.wizard.xp + amount;
+          let newLevel = state.wizard.level;
+          let newXPToNext = state.wizard.xpToNextLevel;
+
+          // Level up loop (in case of large XP gains)
+          while (newXP >= newXPToNext) {
+            newXP -= newXPToNext;
+            newLevel += 1;
+            // XP requirement increases by 50% each level
+            newXPToNext = Math.floor(newXPToNext * 1.5);
+          }
+
+          return {
+            wizard: {
+              ...state.wizard,
+              xp: newXP,
+              level: newLevel,
+              xpToNextLevel: newXPToNext,
+            },
+          };
+        });
+      },
+
       resetGame: () => {
         set({ ...initialState, selectedMinionId: null, conversation: initialConversationState });
       },
@@ -399,6 +444,10 @@ export const useGameStore = create<GameStore>()(
         // If no minions exist, add the starter minion
         if (!merged.minions || merged.minions.length === 0) {
           merged.minions = [starterMinion];
+        }
+        // Ensure wizard state exists
+        if (!merged.wizard) {
+          merged.wizard = defaultWizard;
         }
         return merged;
       },
