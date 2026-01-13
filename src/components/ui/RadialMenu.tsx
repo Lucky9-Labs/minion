@@ -63,7 +63,7 @@ export function RadialMenu({ visible, options, onSelect, onCancel, selectionDelt
     setSelectedIndex(index);
   }, [visible, selectionDelta, options.length]);
 
-  // Handle click to select
+  // Handle click to select (or cancel if no selection)
   const handleClick = useCallback(() => {
     if (selectedIndex !== null && options[selectedIndex]) {
       const option = options[selectedIndex];
@@ -72,6 +72,9 @@ export function RadialMenu({ visible, options, onSelect, onCancel, selectionDelt
       } else {
         onSelect(option);
       }
+    } else {
+      // No selection made - cancel/close the menu
+      onCancel();
     }
   }, [selectedIndex, options, onSelect, onCancel]);
 
