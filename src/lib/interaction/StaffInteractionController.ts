@@ -56,6 +56,12 @@ export class StaffInteractionController {
   // Look-to-select: accumulated mouse delta while menu is open
   private menuSelectionDelta: { x: number; y: number } = { x: 0, y: 0 };
 
+  // Suspended entity (when menu is open on a minion - they hover in place)
+  private suspendedEntityId: string | null = null;
+  private suspendedMesh: THREE.Object3D | null = null;
+  private suspendedOriginalRotation: THREE.Euler | null = null;
+  private suspendedOriginalPosition: THREE.Vector3 | null = null;
+
   // Callbacks
   private callbacks: StaffInteractionCallbacks = {};
 
@@ -277,12 +283,18 @@ export class StaffInteractionController {
         this.callbacks.onStaffStateChange?.('charging');
         // Reset selection delta when entering menu mode
         this.menuSelectionDelta = { x: 0, y: 0 };
+        // Suspend the targeted minion (they hover in place)
+        if (this.state.target?.type === 'minion' && this.state.target.mesh && this.state.target.id) {
+          this.suspendEntity(this.state.target.id, this.state.target.mesh);
+        }
         break;
       case 'idle':
       default:
         this.staffBeam.setMode('idle');
         this.staffBeam.setVisible(false);
         this.callbacks.onStaffStateChange?.('idle');
+        // Release any suspended entity (restore their rotation)
+        this.releaseSuspendedEntity();
         break;
     }
 
@@ -439,6 +451,31 @@ export class StaffInteractionController {
 
   canCompleteDrawing(): boolean {
     return this.foundationDrawer.canComplete();
+  }
+
+  // Suspend entity (for menu hover state - they float and spin)
+  private suspendEntity(entityId: string, mesh: THREE.Object3D): void {
+    this.suspendedEntityId = entityId;
+    this.suspendedMesh = mesh;
+    this.suspendedOriginalRotation = mesh.rotation.clone();
+    this.suspendedOriginalPosition = mesh.position.clone();
+  }
+
+  // Release suspended entity and restore their orientation
+  private releaseSuspendedEntity(): void {
+    if (this.suspendedMesh && this.suspendedOriginalRotation && this.suspendedOriginalPosition) {
+      // Restore original rotation
+      this.suspendedMesh.rotation.copy(this.suspendedOriginalRotation);
+      // Note: position is managed by the animation loop, just restore rotation
+    }
+    this.suspendedEntityId = null;
+    this.suspendedMesh = null;
+    this.suspendedOriginalRotation = null;
+    this.suspendedOriginalPosition = null;
+  }
+
+  getSuspendedEntityId(): string | null {
+    return this.suspendedEntityId;
   }
 
   dispose(): void {

@@ -1329,21 +1329,26 @@ export function SimpleScene({
 
       // Animate minions
       const grabbedMinionId = interactionControllerRef.current?.getGrabbedEntityId();
+      const suspendedMinionId = interactionControllerRef.current?.getSuspendedEntityId();
       minionsRef.current.forEach((data) => {
-        // Check if this minion is being force grabbed
+        // Check if this minion is being force grabbed or suspended (menu open)
         const isGrabbed = grabbedMinionId === data.minionId;
+        const isSuspended = suspendedMinionId === data.minionId;
 
         // Check if this minion is in conversation
         const isConversing = inConversation && conversationState.minionId === data.minionId;
 
-        // Update animator (not moving if conversing or grabbed)
-        data.instance.animator.update(deltaTime, elapsedTime, data.isMoving && !isConversing && !isGrabbed);
+        // Update animator (not moving if conversing, grabbed, or suspended)
+        data.instance.animator.update(deltaTime, elapsedTime, data.isMoving && !isConversing && !isGrabbed && !isSuspended);
 
-        // If grabbed, skip normal movement - ForceGrabController handles position
-        // Add confused flailing animation
-        if (isGrabbed) {
+        // If grabbed or suspended (menu open), apply ragdoll effect
+        // Grabbed: ForceGrabController handles position
+        // Suspended: hover in place with spin
+        if (isGrabbed || isSuspended) {
           const refs = data.instance.refs;
-          // Chaotic limb flailing - mesh position/rotation handled by ForceGrabController
+          const mesh = data.instance.mesh;
+
+          // Chaotic limb flailing
           const flailSpeed = 12;
           const flailAmount = 0.8;
           if (refs.leftHand) {
@@ -1360,6 +1365,20 @@ export function SimpleScene({
           if (refs.rightLeg) {
             refs.rightLeg.rotation.x = Math.sin(elapsedTime * flailSpeed * 0.8 + Math.PI) * flailAmount * 0.6;
           }
+
+          // For suspended (not grabbed), we control position/rotation here
+          // Grabbed minions have position handled by ForceGrabController
+          if (isSuspended && !isGrabbed) {
+            // Hover up slightly and spin
+            const hoverHeight = 0.5 + Math.sin(elapsedTime * 2) * 0.1;
+            mesh.position.y = data.currentPosition.y + hoverHeight;
+
+            // Spin and wobble
+            mesh.rotation.y += deltaTime * 2; // Gentle spin
+            mesh.rotation.x = Math.sin(elapsedTime * 3) * 0.2;
+            mesh.rotation.z = Math.cos(elapsedTime * 2.5) * 0.15;
+          }
+
           return; // Skip all normal movement logic
         }
 
