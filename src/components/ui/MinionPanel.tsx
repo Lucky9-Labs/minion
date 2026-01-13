@@ -3,7 +3,11 @@
 import { useState } from 'react';
 import { useGameStore } from '@/store/gameStore';
 import { MINION_ROLES, type MinionRole, type MinionTrait } from '@/types/game';
-import { Panel, Button, Input } from './Panel';
+import { WowPanel, WowPanelInset, WowSectionHeader } from './WowPanel';
+import { WowButton } from './WowButton';
+import { WowInput } from './WowInput';
+import { WowIcon, RoleIcon } from './WowIcon';
+import { wowTheme } from '@/styles/theme';
 
 const TRAITS: MinionTrait[] = ['curious', 'cautious', 'opinionated', 'reckless', 'methodical'];
 
@@ -44,52 +48,107 @@ export function MinionPanel() {
     }
   };
 
+  const roleColors: Record<MinionRole, string> = {
+    scout: wowTheme.colors.scout,
+    scribe: wowTheme.colors.scribe,
+    artificer: wowTheme.colors.artificer,
+  };
+
   return (
-    <Panel title="Minions" className="w-80">
+    <WowPanel
+      title="Minions"
+      icon={<WowIcon name="minions" size="sm" />}
+      className="w-80 animate-fade-in"
+    >
       {isRecruiting ? (
-        <div className="space-y-4">
-          <Input
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <WowInput
             label="Name"
             value={newName}
             onChange={setNewName}
             placeholder="Enter minion name..."
           />
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-300">Role</label>
-            <div className="grid grid-cols-3 gap-2">
+          <div>
+            <WowSectionHeader icon={<WowIcon name="level" size="xs" color={wowTheme.colors.goldMid} />}>
+              Role
+            </WowSectionHeader>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
               {(Object.keys(MINION_ROLES) as MinionRole[]).map((role) => (
                 <button
                   key={role}
                   onClick={() => setSelectedRole(role)}
-                  className={`p-2 rounded-lg border text-center transition-colors ${
-                    selectedRole === role
-                      ? 'border-amber-500 bg-amber-500/20 text-amber-400'
-                      : 'border-gray-600 bg-gray-800 text-gray-300 hover:border-gray-500'
-                  }`}
+                  style={{
+                    padding: '10px 8px',
+                    borderRadius: wowTheme.radius.sm,
+                    border: selectedRole === role
+                      ? `2px solid ${roleColors[role]}`
+                      : `2px solid ${wowTheme.colors.stoneBorder}`,
+                    background: selectedRole === role
+                      ? `${roleColors[role]}30`
+                      : wowTheme.colors.stoneDark,
+                    color: selectedRole === role
+                      ? roleColors[role]
+                      : wowTheme.colors.textSecondary,
+                    cursor: 'pointer',
+                    transition: 'all 150ms ease',
+                    textAlign: 'center',
+                  }}
                 >
-                  <div className="text-sm font-medium">{MINION_ROLES[role].name}</div>
+                  <div style={{ marginBottom: '4px' }}>
+                    <RoleIcon role={role} size="sm" glow={selectedRole === role} />
+                  </div>
+                  <div style={{
+                    fontSize: wowTheme.fontSizes.xs,
+                    fontWeight: 600,
+                    textTransform: 'uppercase',
+                  }}>
+                    {MINION_ROLES[role].name}
+                  </div>
                 </button>
               ))}
             </div>
-            <p className="text-xs text-gray-500">{MINION_ROLES[selectedRole].description}</p>
+            <p style={{
+              marginTop: '8px',
+              fontSize: wowTheme.fontSizes.xs,
+              color: wowTheme.colors.textMuted,
+              fontStyle: 'italic',
+            }}>
+              {MINION_ROLES[selectedRole].description}
+            </p>
           </div>
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-300">
-              Traits <span className="text-gray-500">(up to 2)</span>
-            </label>
-            <div className="flex flex-wrap gap-2">
+          <div>
+            <WowSectionHeader icon={<WowIcon name="rune" size="xs" color={wowTheme.colors.goldMid} />}>
+              Traits <span style={{ color: wowTheme.colors.textMuted, fontWeight: 400 }}>(up to 2)</span>
+            </WowSectionHeader>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {TRAITS.map((trait) => (
                 <button
                   key={trait}
                   onClick={() => toggleTrait(trait)}
                   title={TRAIT_DESCRIPTIONS[trait]}
-                  className={`px-3 py-1 rounded-full text-sm transition-colors ${
-                    selectedTraits.includes(trait)
-                      ? 'bg-purple-500/30 text-purple-300 border border-purple-500'
-                      : 'bg-gray-800 text-gray-400 border border-gray-600 hover:border-gray-500'
-                  }`}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: '12px',
+                    fontSize: wowTheme.fontSizes.xs,
+                    fontWeight: 500,
+                    cursor: 'pointer',
+                    transition: 'all 150ms ease',
+                    textTransform: 'capitalize',
+                    background: selectedTraits.includes(trait)
+                      ? `linear-gradient(180deg, ${wowTheme.colors.bronze}40 0%, ${wowTheme.colors.bronze}20 100%)`
+                      : wowTheme.colors.stoneDark,
+                    border: selectedTraits.includes(trait)
+                      ? `1px solid ${wowTheme.colors.bronze}`
+                      : `1px solid ${wowTheme.colors.stoneBorder}`,
+                    color: selectedTraits.includes(trait)
+                      ? wowTheme.colors.bronzeLight
+                      : wowTheme.colors.textMuted,
+                    boxShadow: selectedTraits.includes(trait)
+                      ? `0 0 8px ${wowTheme.colors.bronze}40`
+                      : 'none',
+                  }}
                 >
                   {trait}
                 </button>
@@ -97,78 +156,151 @@ export function MinionPanel() {
             </div>
           </div>
 
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setIsRecruiting(false)} className="flex-1">
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <WowButton
+              variant="secondary"
+              onClick={() => setIsRecruiting(false)}
+              fullWidth
+            >
               Cancel
-            </Button>
-            <Button onClick={handleRecruit} disabled={!newName.trim()} className="flex-1">
+            </WowButton>
+            <WowButton
+              onClick={handleRecruit}
+              disabled={!newName.trim()}
+              fullWidth
+            >
               Recruit
-            </Button>
+            </WowButton>
           </div>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {/* Minion list */}
-          <div className="space-y-2 max-h-60 overflow-y-auto">
+          <div style={{ maxHeight: '240px', overflowY: 'auto' }}>
             {minions.length === 0 ? (
-              <p className="text-gray-500 text-sm text-center py-4">
-                No minions yet. Recruit your first!
-              </p>
+              <WowPanelInset>
+                <p style={{
+                  textAlign: 'center',
+                  color: wowTheme.colors.textMuted,
+                  fontSize: wowTheme.fontSizes.sm,
+                  padding: '16px 0',
+                  fontStyle: 'italic',
+                }}>
+                  No minions yet. Recruit your first!
+                </p>
+              </WowPanelInset>
             ) : (
-              minions.map((minion) => (
-                <button
-                  key={minion.id}
-                  onClick={() => setSelectedMinion(minion.id)}
-                  className={`w-full p-3 rounded-lg border text-left transition-colors ${
-                    selectedMinionId === minion.id
-                      ? 'border-amber-500 bg-amber-500/10'
-                      : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="w-8 h-8 rounded-full flex items-center justify-center"
-                      style={{ backgroundColor: MINION_ROLES[minion.role].color }}
-                    >
-                      <span className="text-white text-sm font-bold">
-                        {minion.name[0].toUpperCase()}
-                      </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium text-white truncate">{minion.name}</div>
-                      <div className="text-xs text-gray-400">
-                        {MINION_ROLES[minion.role].name} • {minion.state}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {minions.map((minion) => (
+                  <button
+                    key={minion.id}
+                    onClick={() => setSelectedMinion(minion.id)}
+                    className={selectedMinionId === minion.id ? 'wow-slot selected' : 'wow-slot'}
+                    style={{
+                      width: '100%',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div
+                        style={{
+                          width: '36px',
+                          height: '36px',
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          background: `linear-gradient(135deg, ${roleColors[minion.role]} 0%, ${roleColors[minion.role]}80 100%)`,
+                          border: `2px solid ${roleColors[minion.role]}`,
+                          boxShadow: `0 0 8px ${roleColors[minion.role]}40`,
+                        }}
+                      >
+                        <span style={{
+                          color: wowTheme.colors.textPrimary,
+                          fontSize: wowTheme.fontSizes.sm,
+                          fontWeight: 700,
+                          textShadow: wowTheme.shadows.text,
+                        }}>
+                          {minion.name[0].toUpperCase()}
+                        </span>
                       </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{
+                          fontWeight: 600,
+                          color: wowTheme.colors.textPrimary,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {minion.name}
+                        </div>
+                        <div style={{
+                          fontSize: wowTheme.fontSizes.xs,
+                          color: wowTheme.colors.textMuted,
+                        }}>
+                          {MINION_ROLES[minion.role].name} • <span style={{
+                            color: minion.state === 'idle'
+                              ? wowTheme.colors.success
+                              : wowTheme.colors.goldMid
+                          }}>{minion.state}</span>
+                        </div>
+                      </div>
+                      {minion.state !== 'idle' && (
+                        <div
+                          className="animate-pulse-glow"
+                          style={{
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            background: wowTheme.colors.goldMid,
+                          }}
+                        />
+                      )}
                     </div>
-                    {minion.state !== 'idle' && (
-                      <div className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-                    )}
-                  </div>
-                </button>
-              ))
+                  </button>
+                ))}
+              </div>
             )}
           </div>
 
-          <Button onClick={() => setIsRecruiting(true)} className="w-full">
-            + Recruit Minion
-          </Button>
+          <WowButton
+            onClick={() => setIsRecruiting(true)}
+            fullWidth
+            icon={<span style={{ fontSize: '14px' }}>+</span>}
+          >
+            Recruit Minion
+          </WowButton>
 
-          {/* Selected minion details */}
+          {/* Selected minion quick details */}
           {selectedMinion && (
-            <div className="pt-4 border-t border-gray-700 space-y-2">
-              <h3 className="font-medium text-white">{selectedMinion.name}</h3>
-              <div className="text-sm text-gray-400">
-                <p>Role: {MINION_ROLES[selectedMinion.role].name}</p>
-                <p>State: {selectedMinion.state}</p>
+            <WowPanelInset>
+              <h3 style={{
+                fontWeight: 600,
+                color: wowTheme.colors.goldLight,
+                marginBottom: '8px',
+                fontFamily: wowTheme.fonts.header,
+              }}>
+                {selectedMinion.name}
+              </h3>
+              <div style={{
+                fontSize: wowTheme.fontSizes.xs,
+                color: wowTheme.colors.textSecondary,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '4px',
+              }}>
+                <p>Role: <span style={{ color: roleColors[selectedMinion.role] }}>{MINION_ROLES[selectedMinion.role].name}</span></p>
+                <p>State: <span style={{ color: wowTheme.colors.textPrimary }}>{selectedMinion.state}</span></p>
                 {selectedMinion.traits.length > 0 && (
-                  <p>Traits: {selectedMinion.traits.join(', ')}</p>
+                  <p>Traits: <span style={{ color: wowTheme.colors.bronzeLight }}>{selectedMinion.traits.join(', ')}</span></p>
                 )}
-                <p>Memories: {selectedMinion.memories.length}</p>
+                <p>Memories: <span style={{ color: wowTheme.colors.textPrimary }}>{selectedMinion.memories.length}</span></p>
               </div>
-            </div>
+            </WowPanelInset>
           )}
         </div>
       )}
-    </Panel>
+    </WowPanel>
   );
 }

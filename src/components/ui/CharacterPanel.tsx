@@ -2,6 +2,9 @@
 
 import { useGameStore } from '@/store/gameStore';
 import { MINION_ROLES } from '@/types/game';
+import { WowIcon, RoleIcon } from './WowIcon';
+import { WowIconButton } from './WowButton';
+import { wowTheme } from '@/styles/theme';
 
 // Placeholder lore for different minion roles
 const ROLE_LORE: Record<string, string[]> = {
@@ -55,6 +58,12 @@ export function CharacterPanel() {
   const roleConfig = MINION_ROLES[selectedMinion.role];
   const roleLore = ROLE_LORE[selectedMinion.role] || ROLE_LORE.scout;
 
+  const roleColors: Record<string, string> = {
+    scout: wowTheme.colors.scout,
+    scribe: wowTheme.colors.scribe,
+    artificer: wowTheme.colors.artificer,
+  };
+
   // Generate consistent "random" content based on minion id
   const idHash = selectedMinion.id.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
   const loreIndex = idHash % roleLore.length;
@@ -63,142 +72,293 @@ export function CharacterPanel() {
   const items = COLLECTED_ITEMS.slice(0, itemCount);
 
   return (
-    <div className="fixed right-4 top-20 bottom-20 w-80 bg-gray-900/95 backdrop-blur-sm rounded-xl border border-gray-700 shadow-2xl overflow-hidden flex flex-col z-50">
+    <div
+      className="animate-fade-in"
+      style={{
+        position: 'fixed',
+        right: '16px',
+        top: '80px',
+        bottom: '80px',
+        width: '320px',
+        background: `linear-gradient(180deg, ${wowTheme.colors.parchmentMid} 0%, ${wowTheme.colors.parchmentDark} 100%)`,
+        border: `3px solid ${wowTheme.colors.stoneBorder}`,
+        borderRadius: wowTheme.radius.md,
+        boxShadow: wowTheme.shadows.panelHeavy,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        zIndex: 50,
+      }}
+    >
       {/* Header */}
       <div
-        className="p-4 border-b border-gray-700"
-        style={{ backgroundColor: `${roleConfig.color}20` }}
+        style={{
+          padding: '16px',
+          borderBottom: `2px solid ${wowTheme.colors.stoneBorder}`,
+          background: `linear-gradient(180deg, ${roleColors[selectedMinion.role]}30 0%, ${wowTheme.colors.stoneDark} 100%)`,
+        }}
       >
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {/* Goblin avatar */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {/* Avatar */}
             <div
-              className="w-12 h-12 rounded-full flex items-center justify-center text-2xl"
-              style={{ backgroundColor: roleConfig.color }}
+              style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '50%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                background: `linear-gradient(135deg, ${roleColors[selectedMinion.role]} 0%, ${roleColors[selectedMinion.role]}60 100%)`,
+                border: `3px solid ${wowTheme.colors.goldMid}`,
+                boxShadow: `0 0 12px ${roleColors[selectedMinion.role]}60`,
+              }}
             >
-              <span role="img" aria-label="goblin">
-                {selectedMinion.role === 'scout' ? '🧝' :
-                 selectedMinion.role === 'scribe' ? '📜' : '⚒️'}
-              </span>
+              <RoleIcon role={selectedMinion.role} size="md" />
             </div>
             <div>
-              <h2 className="text-lg font-bold text-white">{selectedMinion.name}</h2>
-              <p className="text-sm" style={{ color: roleConfig.color }}>
+              <h2 style={{
+                margin: 0,
+                fontWeight: 700,
+                color: wowTheme.colors.goldLight,
+                fontSize: wowTheme.fontSizes.lg,
+                fontFamily: wowTheme.fonts.header,
+                textShadow: wowTheme.shadows.text,
+              }}>
+                {selectedMinion.name}
+              </h2>
+              <p style={{
+                margin: 0,
+                fontSize: wowTheme.fontSizes.sm,
+                color: roleColors[selectedMinion.role],
+                fontWeight: 500,
+              }}>
                 {roleConfig.name}
               </p>
             </div>
           </div>
-          <button
+          <WowIconButton
+            icon={<WowIcon name="close" size="sm" color={wowTheme.colors.textMuted} />}
             onClick={() => setSelectedMinion(null)}
-            className="text-gray-400 hover:text-white transition-colors p-1"
-            aria-label="Close panel"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+            tooltip="Close panel"
+          />
         </div>
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div style={{
+        flex: 1,
+        overflowY: 'auto',
+        padding: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '16px',
+      }}>
         {/* Status */}
-        <div className="bg-gray-800/50 rounded-lg p-3">
-          <h3 className="text-sm font-semibold text-gray-400 mb-2">Status</h3>
-          <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full ${
-              selectedMinion.state === 'idle' ? 'bg-green-500 animate-pulse' :
-              selectedMinion.state === 'traveling' ? 'bg-amber-500' :
-              selectedMinion.state === 'working' ? 'bg-blue-500' :
-              'bg-gray-500'
-            }`} />
-            <span className="text-white capitalize">{selectedMinion.state}</span>
+        <Section title="Status" icon={<WowIcon name="info" size="xs" color={wowTheme.colors.goldMid} />}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div
+              className={selectedMinion.state === 'idle' ? 'animate-pulse-glow' : ''}
+              style={{
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                background: selectedMinion.state === 'idle'
+                  ? wowTheme.colors.success
+                  : selectedMinion.state === 'traveling'
+                  ? wowTheme.colors.goldMid
+                  : selectedMinion.state === 'working'
+                  ? wowTheme.colors.scribe
+                  : wowTheme.colors.textMuted,
+              }}
+            />
+            <span style={{
+              color: wowTheme.colors.textPrimary,
+              textTransform: 'capitalize',
+              fontWeight: 500,
+            }}>
+              {selectedMinion.state}
+            </span>
           </div>
-        </div>
+        </Section>
 
         {/* Traits */}
-        <div className="bg-gray-800/50 rounded-lg p-3">
-          <h3 className="text-sm font-semibold text-gray-400 mb-2">Traits</h3>
-          <div className="flex flex-wrap gap-2">
+        <Section title="Traits" icon={<WowIcon name="rune" size="xs" color={wowTheme.colors.goldMid} />}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
             {selectedMinion.traits.map((trait) => (
               <span
                 key={trait}
-                className="px-2 py-1 text-xs rounded-full bg-gray-700 text-gray-300 capitalize"
+                style={{
+                  padding: '4px 10px',
+                  fontSize: wowTheme.fontSizes.xs,
+                  borderRadius: '12px',
+                  background: `${wowTheme.colors.bronze}30`,
+                  border: `1px solid ${wowTheme.colors.bronze}`,
+                  color: wowTheme.colors.bronzeLight,
+                  textTransform: 'capitalize',
+                }}
               >
                 {trait}
               </span>
             ))}
             {selectedMinion.traits.length === 0 && (
-              <span className="text-gray-500 text-sm italic">No special traits yet</span>
+              <span style={{
+                color: wowTheme.colors.textMuted,
+                fontSize: wowTheme.fontSizes.sm,
+                fontStyle: 'italic',
+              }}>
+                No special traits yet
+              </span>
             )}
           </div>
-        </div>
+        </Section>
 
         {/* Lore */}
-        <div className="bg-gray-800/50 rounded-lg p-3">
-          <h3 className="text-sm font-semibold text-gray-400 mb-2">Origin Story</h3>
-          <p className="text-gray-300 text-sm italic leading-relaxed">
+        <Section title="Origin Story" icon={<WowIcon name="scroll" size="xs" color={wowTheme.colors.goldMid} />}>
+          <p style={{
+            color: wowTheme.colors.textSecondary,
+            fontSize: wowTheme.fontSizes.sm,
+            fontStyle: 'italic',
+            lineHeight: 1.5,
+            margin: 0,
+          }}>
             "{roleLore[loreIndex]}"
           </p>
-        </div>
+        </Section>
 
         {/* Adventures */}
-        <div className="bg-gray-800/50 rounded-lg p-3">
-          <h3 className="text-sm font-semibold text-gray-400 mb-2">Recent Adventures</h3>
+        <Section title="Recent Adventures" icon={<WowIcon name="quest" size="xs" color={wowTheme.colors.goldMid} />}>
           {selectedMinion.memories.length > 0 ? (
-            <ul className="space-y-2">
+            <ul style={{ margin: 0, padding: 0, listStyle: 'none', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {selectedMinion.memories.slice(-3).map((memory) => (
-                <li key={memory.id} className="text-sm text-gray-300 flex gap-2">
-                  <span className="text-amber-500">•</span>
+                <li
+                  key={memory.id}
+                  style={{
+                    fontSize: wowTheme.fontSizes.sm,
+                    color: wowTheme.colors.textSecondary,
+                    display: 'flex',
+                    gap: '8px',
+                  }}
+                >
+                  <span style={{ color: wowTheme.colors.goldMid }}>*</span>
                   {memory.content}
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-gray-300">
-              <span className="text-amber-500">•</span> {ADVENTURE_STORIES[storyIndex]}
+            <p style={{
+              fontSize: wowTheme.fontSizes.sm,
+              color: wowTheme.colors.textSecondary,
+              display: 'flex',
+              gap: '8px',
+              margin: 0,
+            }}>
+              <span style={{ color: wowTheme.colors.goldMid }}>*</span>
+              {ADVENTURE_STORIES[storyIndex]}
             </p>
           )}
-        </div>
+        </Section>
 
         {/* Collected Items */}
-        <div className="bg-gray-800/50 rounded-lg p-3">
-          <h3 className="text-sm font-semibold text-gray-400 mb-2">Collected Treasures</h3>
-          <div className="space-y-2">
+        <Section title="Collected Treasures" icon={<WowIcon name="artifact" size="xs" color={wowTheme.colors.goldMid} />}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {items.map((item, idx) => (
-              <div key={idx} className="flex items-start gap-2">
-                <span className="text-amber-500 mt-0.5">✦</span>
+              <div key={idx} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                <WowIcon name="gold" size="sm" color={wowTheme.colors.goldMid} />
                 <div>
-                  <p className="text-sm text-white font-medium">{item.name}</p>
-                  <p className="text-xs text-gray-400">{item.description}</p>
+                  <p style={{
+                    fontSize: wowTheme.fontSizes.sm,
+                    color: wowTheme.colors.textPrimary,
+                    fontWeight: 500,
+                    margin: 0,
+                  }}>
+                    {item.name}
+                  </p>
+                  <p style={{
+                    fontSize: wowTheme.fontSizes.xs,
+                    color: wowTheme.colors.textMuted,
+                    margin: 0,
+                  }}>
+                    {item.description}
+                  </p>
                 </div>
               </div>
             ))}
           </div>
-        </div>
+        </Section>
 
         {/* Stats */}
-        <div className="bg-gray-800/50 rounded-lg p-3">
-          <h3 className="text-sm font-semibold text-gray-400 mb-2">Statistics</h3>
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            <div className="text-gray-400">Quests Completed</div>
-            <div className="text-white text-right">{selectedMinion.memories.length}</div>
-            <div className="text-gray-400">Days in Service</div>
-            <div className="text-white text-right">
+        <Section title="Statistics" icon={<WowIcon name="level" size="xs" color={wowTheme.colors.goldMid} />}>
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr auto',
+            gap: '8px',
+            fontSize: wowTheme.fontSizes.sm,
+          }}>
+            <span style={{ color: wowTheme.colors.textMuted }}>Quests Completed</span>
+            <span style={{ color: wowTheme.colors.textPrimary, fontWeight: 500 }}>{selectedMinion.memories.length}</span>
+            <span style={{ color: wowTheme.colors.textMuted }}>Days in Service</span>
+            <span style={{ color: wowTheme.colors.textPrimary, fontWeight: 500 }}>
               {Math.floor((Date.now() - selectedMinion.createdAt) / (1000 * 60 * 60 * 24))}
-            </div>
-            <div className="text-gray-400">Loyalty</div>
-            <div className="text-white text-right">Unwavering</div>
+            </span>
+            <span style={{ color: wowTheme.colors.textMuted }}>Loyalty</span>
+            <span style={{ color: wowTheme.colors.goldMid, fontWeight: 500 }}>Unwavering</span>
           </div>
-        </div>
+        </Section>
       </div>
 
       {/* Footer */}
-      <div className="p-4 border-t border-gray-700 bg-gray-900/50">
-        <p className="text-xs text-gray-500 text-center italic">
-          Click on the goblin in the world to interact
+      <div style={{
+        padding: '12px 16px',
+        borderTop: `2px solid ${wowTheme.colors.stoneBorder}`,
+        background: wowTheme.colors.stoneDark,
+      }}>
+        <p style={{
+          fontSize: wowTheme.fontSizes.xs,
+          color: wowTheme.colors.textMuted,
+          textAlign: 'center',
+          fontStyle: 'italic',
+          margin: 0,
+        }}>
+          Click on the minion in the world to interact
         </p>
       </div>
+    </div>
+  );
+}
+
+// Section component for consistent styling
+function Section({ title, icon, children }: { title: string; icon?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div style={{
+      background: wowTheme.colors.stoneDark,
+      border: `1px solid ${wowTheme.colors.stoneBorder}`,
+      borderRadius: wowTheme.radius.sm,
+      boxShadow: wowTheme.shadows.inset,
+      padding: '12px',
+    }}>
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        marginBottom: '8px',
+        paddingBottom: '6px',
+        borderBottom: `1px solid ${wowTheme.colors.stoneBorder}`,
+      }}>
+        {icon}
+        <h3 style={{
+          margin: 0,
+          fontSize: wowTheme.fontSizes.xs,
+          fontWeight: 600,
+          color: wowTheme.colors.goldMid,
+          textTransform: 'uppercase',
+          letterSpacing: '0.5px',
+          fontFamily: wowTheme.fonts.header,
+        }}>
+          {title}
+        </h3>
+      </div>
+      {children}
     </div>
   );
 }

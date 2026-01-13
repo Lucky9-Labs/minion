@@ -3,7 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useGameStore } from '@/store/gameStore';
 import { MINION_ROLES, type QuestPhase } from '@/types/game';
-import { Panel, Button, Input } from './Panel';
+import { WowPanel, WowPanelInset, WowSectionHeader } from './WowPanel';
+import { WowButton } from './WowButton';
+import { WowInput } from './WowInput';
+import { WowIcon, RoleIcon } from './WowIcon';
+import { wowTheme } from '@/styles/theme';
 import { getRandomEvent } from '@/lib/questSimulation';
 
 const PHASE_LABELS: Record<QuestPhase, string> = {
@@ -17,13 +21,13 @@ const PHASE_LABELS: Record<QuestPhase, string> = {
 };
 
 const PHASE_COLORS: Record<QuestPhase, string> = {
-  departure: 'bg-blue-500',
-  travel: 'bg-cyan-500',
-  work: 'bg-amber-500',
-  event: 'bg-purple-500',
-  resolution: 'bg-green-500',
-  return: 'bg-teal-500',
-  complete: 'bg-emerald-500',
+  departure: wowTheme.colors.scribe,
+  travel: '#06b6d4',
+  work: wowTheme.colors.goldMid,
+  event: wowTheme.colors.bronze,
+  resolution: wowTheme.colors.scout,
+  return: '#14b8a6',
+  complete: wowTheme.colors.success,
 };
 
 // Simulated quest progression
@@ -67,7 +71,7 @@ function useQuestSimulation(questId: string | null) {
         // Random events
         if (nextPhase === 'event' && Math.random() > 0.3) {
           const eventTypes: ('flavor' | 'modifier' | 'social')[] = ['flavor', 'modifier', 'social'];
-          const weights = [0.6, 0.25, 0.15]; // Flavor is most common
+          const weights = [0.6, 0.25, 0.15];
           const random = Math.random();
           let cumulative = 0;
           let selectedType: 'flavor' | 'modifier' | 'social' = 'flavor';
@@ -144,48 +148,105 @@ export function QuestPanel() {
   };
 
   return (
-    <Panel title="Quests" className="w-80">
+    <WowPanel
+      title="Quests"
+      icon={<WowIcon name="quest" size="sm" />}
+      className="w-80 animate-fade-in"
+    >
       {activeQuest ? (
-        <div className="space-y-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {/* Active quest view */}
-          <div className="space-y-2">
-            <h3 className="font-medium text-white text-lg">{activeQuest.title}</h3>
+          <div>
+            <h3 style={{
+              fontWeight: 600,
+              color: wowTheme.colors.goldLight,
+              fontSize: wowTheme.fontSizes.lg,
+              fontFamily: wowTheme.fonts.header,
+              marginBottom: '8px',
+            }}>
+              {activeQuest.title}
+            </h3>
             {activeQuest.description && (
-              <p className="text-sm text-gray-400">{activeQuest.description}</p>
+              <p style={{
+                fontSize: wowTheme.fontSizes.sm,
+                color: wowTheme.colors.textSecondary,
+                fontStyle: 'italic',
+              }}>
+                {activeQuest.description}
+              </p>
             )}
           </div>
 
           {/* Phase indicator */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-sm">
-              <span className={`px-2 py-1 rounded-full text-white ${PHASE_COLORS[activeQuest.phase]}`}>
+          <WowPanelInset>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '8px',
+            }}>
+              <span
+                className="wow-badge"
+                style={{
+                  background: `linear-gradient(180deg, ${PHASE_COLORS[activeQuest.phase]} 0%, ${PHASE_COLORS[activeQuest.phase]}80 100%)`,
+                  borderColor: PHASE_COLORS[activeQuest.phase],
+                  color: wowTheme.colors.textPrimary,
+                  boxShadow: `0 0 8px ${PHASE_COLORS[activeQuest.phase]}40`,
+                }}
+              >
                 {PHASE_LABELS[activeQuest.phase]}
               </span>
-              <span className="text-gray-400">{Math.round(activeQuest.progress)}%</span>
+              <span style={{
+                fontSize: wowTheme.fontSizes.sm,
+                color: wowTheme.colors.goldMid,
+                fontWeight: 600,
+              }}>
+                {Math.round(activeQuest.progress)}%
+              </span>
             </div>
-            <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+            <div className="wow-progress">
               <div
-                className={`h-full transition-all duration-300 ${PHASE_COLORS[activeQuest.phase]}`}
-                style={{ width: `${activeQuest.progress}%` }}
+                className="wow-progress-bar"
+                style={{
+                  width: `${activeQuest.progress}%`,
+                  background: `linear-gradient(180deg, ${PHASE_COLORS[activeQuest.phase]} 0%, ${PHASE_COLORS[activeQuest.phase]}80 100%)`,
+                }}
               />
             </div>
-          </div>
+          </WowPanelInset>
 
           {/* Events log */}
           {activeQuest.events.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium text-gray-300">Events</h4>
-              <div className="space-y-1 max-h-32 overflow-y-auto">
+            <div>
+              <WowSectionHeader icon={<WowIcon name="scroll" size="xs" color={wowTheme.colors.goldMid} />}>
+                Events
+              </WowSectionHeader>
+              <div style={{ maxHeight: '128px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 {activeQuest.events.map((event) => (
                   <div
                     key={event.id}
-                    className={`text-xs p-2 rounded ${
-                      event.type === 'flavor'
-                        ? 'bg-gray-800 text-gray-400'
+                    style={{
+                      fontSize: wowTheme.fontSizes.xs,
+                      padding: '8px',
+                      borderRadius: wowTheme.radius.sm,
+                      background: event.type === 'flavor'
+                        ? wowTheme.colors.stoneDark
                         : event.type === 'modifier'
-                        ? 'bg-purple-900/30 text-purple-300'
-                        : 'bg-blue-900/30 text-blue-300'
-                    }`}
+                        ? `${wowTheme.colors.bronze}20`
+                        : `${wowTheme.colors.scribe}20`,
+                      border: `1px solid ${
+                        event.type === 'flavor'
+                          ? wowTheme.colors.stoneBorder
+                          : event.type === 'modifier'
+                          ? wowTheme.colors.bronze
+                          : wowTheme.colors.scribe
+                      }`,
+                      color: event.type === 'flavor'
+                        ? wowTheme.colors.textMuted
+                        : event.type === 'modifier'
+                        ? wowTheme.colors.bronzeLight
+                        : wowTheme.colors.scribeLight,
+                    }}
                   >
                     {event.text}
                   </div>
@@ -195,93 +256,130 @@ export function QuestPanel() {
           )}
         </div>
       ) : isCreating ? (
-        <div className="space-y-4">
-          <Input
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <WowInput
             label="Quest Title"
             value={questTitle}
             onChange={setQuestTitle}
             placeholder="e.g., Research API patterns"
           />
-          <Input
+          <WowInput
             label="Description"
             value={questDescription}
             onChange={setQuestDescription}
             placeholder="What should the minion accomplish?"
             multiline
+            rows={3}
           />
 
           {selectedMinion ? (
-            <div className="p-3 bg-gray-800 rounded-lg">
-              <div className="flex items-center gap-2">
-                <div
-                  className="w-6 h-6 rounded-full"
-                  style={{ backgroundColor: MINION_ROLES[selectedMinion.role].color }}
-                />
-                <span className="text-white">{selectedMinion.name}</span>
-                <span className="text-gray-500 text-sm">will be dispatched</span>
+            <WowPanelInset>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <RoleIcon role={selectedMinion.role} size="sm" glow />
+                <span style={{ color: wowTheme.colors.textPrimary, fontWeight: 500 }}>
+                  {selectedMinion.name}
+                </span>
+                <span style={{ color: wowTheme.colors.textMuted, fontSize: wowTheme.fontSizes.xs }}>
+                  will be dispatched
+                </span>
               </div>
-            </div>
+            </WowPanelInset>
           ) : (
-            <p className="text-amber-500 text-sm">Select an idle minion first</p>
+            <p style={{
+              color: wowTheme.colors.goldMid,
+              fontSize: wowTheme.fontSizes.sm,
+              fontStyle: 'italic',
+            }}>
+              Select an idle minion first
+            </p>
           )}
 
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => setIsCreating(false)} className="flex-1">
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <WowButton variant="secondary" onClick={() => setIsCreating(false)} fullWidth>
               Cancel
-            </Button>
-            <Button
+            </WowButton>
+            <WowButton
               onClick={handleCreateQuest}
               disabled={!questTitle.trim() || !selectedMinion || selectedMinion.state !== 'idle'}
-              className="flex-1"
+              fullWidth
             >
               Dispatch
-            </Button>
+            </WowButton>
           </div>
         </div>
       ) : (
-        <div className="space-y-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
           {/* Recent quests */}
-          <div className="space-y-2 max-h-40 overflow-y-auto">
+          <div style={{ maxHeight: '160px', overflowY: 'auto' }}>
             {quests.length === 0 ? (
-              <p className="text-gray-500 text-sm text-center py-4">
-                No quests yet. Create your first!
-              </p>
+              <WowPanelInset>
+                <p style={{
+                  textAlign: 'center',
+                  color: wowTheme.colors.textMuted,
+                  fontSize: wowTheme.fontSizes.sm,
+                  padding: '16px 0',
+                  fontStyle: 'italic',
+                }}>
+                  No quests yet. Create your first!
+                </p>
+              </WowPanelInset>
             ) : (
-              quests
-                .slice()
-                .reverse()
-                .slice(0, 5)
-                .map((quest) => (
-                  <div
-                    key={quest.id}
-                    className="p-3 bg-gray-800/50 rounded-lg border border-gray-700"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-white font-medium truncate">{quest.title}</span>
-                      <span
-                        className={`text-xs px-2 py-0.5 rounded-full ${
-                          quest.phase === 'complete'
-                            ? 'bg-emerald-500/20 text-emerald-400'
-                            : 'bg-amber-500/20 text-amber-400'
-                        }`}
-                      >
-                        {quest.phase === 'complete' ? 'Done' : 'Active'}
-                      </span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                {quests
+                  .slice()
+                  .reverse()
+                  .slice(0, 5)
+                  .map((quest) => (
+                    <div
+                      key={quest.id}
+                      className="wow-slot"
+                      style={{ cursor: 'default' }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <span style={{
+                          color: wowTheme.colors.textPrimary,
+                          fontWeight: 500,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          flex: 1,
+                        }}>
+                          {quest.title}
+                        </span>
+                        <span
+                          className="wow-badge"
+                          style={{
+                            marginLeft: '8px',
+                            background: quest.phase === 'complete'
+                              ? `${wowTheme.colors.success}30`
+                              : `${wowTheme.colors.goldMid}30`,
+                            borderColor: quest.phase === 'complete'
+                              ? wowTheme.colors.success
+                              : wowTheme.colors.goldMid,
+                            color: quest.phase === 'complete'
+                              ? wowTheme.colors.success
+                              : wowTheme.colors.goldMid,
+                          }}
+                        >
+                          {quest.phase === 'complete' ? 'Done' : 'Active'}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))
+                  ))}
+              </div>
             )}
           </div>
 
-          <Button
+          <WowButton
             onClick={() => setIsCreating(true)}
             disabled={availableMinions.length === 0}
-            className="w-full"
+            fullWidth
+            icon={<span style={{ fontSize: '14px' }}>+</span>}
           >
-            {availableMinions.length === 0 ? 'No idle minions' : '+ Create Quest'}
-          </Button>
+            {availableMinions.length === 0 ? 'No idle minions' : 'Create Quest'}
+          </WowButton>
         </div>
       )}
-    </Panel>
+    </WowPanel>
   );
 }

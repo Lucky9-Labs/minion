@@ -26,6 +26,25 @@ interface MinionSceneData {
   torchId: string; // ID for this minion's torch
 }
 
+// Wildlife (squirrels, rabbits) data
+interface WildlifeData {
+  mesh: THREE.Group;
+  position: THREE.Vector3;
+  targetPosition: THREE.Vector3 | null;
+  isMoving: boolean;
+  idleTimer: number;
+  speed: number;
+  hopPhase: number;
+  type: 'squirrel' | 'rabbit' | 'bird';
+}
+
+// Cloud shadow data
+interface CloudShadowData {
+  mesh: THREE.Mesh;
+  speed: THREE.Vector2;
+  offset: THREE.Vector2;
+}
+
 // Building bounds for collision and inside detection
 interface BuildingBounds {
   minX: number;
@@ -60,6 +79,8 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const dayNightCycleRef = useRef<DayNightCycle | null>(null);
   const torchManagerRef = useRef<TorchManager | null>(null);
   const interiorLightsRef = useRef<InteriorLight[]>([]);
+  const wildlifeRef = useRef<WildlifeData[]>([]);
+  const cloudShadowsRef = useRef<CloudShadowData[]>([]);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -233,6 +254,173 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     });
     wallCullerRef.current = wallCuller;
 
+    // === CLOUD SHADOWS (drifting across terrain for diffuse lighting) ===
+    const cloudShadows: CloudShadowData[] = [];
+    for (let i = 0; i < 5; i++) {
+      // Create elliptical shadow shape
+      const cloudSize = 15 + Math.random() * 20;
+      const cloudGeo = new THREE.CircleGeometry(cloudSize, 8);
+      const cloudMat = new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        transparent: true,
+        opacity: 0.08 + Math.random() * 0.06,
+        depthWrite: false,
+      });
+      const cloud = new THREE.Mesh(cloudGeo, cloudMat);
+      cloud.rotation.x = -Math.PI / 2;
+      cloud.position.y = 0.1; // Just above ground
+      cloud.position.x = (Math.random() - 0.5) * WORLD_HALF_SIZE * 2;
+      cloud.position.z = (Math.random() - 0.5) * WORLD_HALF_SIZE * 2;
+      // Stretch into ellipse
+      cloud.scale.set(1, 1, 0.6 + Math.random() * 0.4);
+      cloud.renderOrder = -1;
+      scene.add(cloud);
+
+      cloudShadows.push({
+        mesh: cloud,
+        speed: new THREE.Vector2(
+          0.5 + Math.random() * 1.0,
+          0.2 + Math.random() * 0.5
+        ),
+        offset: new THREE.Vector2(cloud.position.x, cloud.position.z),
+      });
+    }
+    cloudShadowsRef.current = cloudShadows;
+
+    // === WILDLIFE (squirrels, rabbits hopping around) ===
+    const wildlife: WildlifeData[] = [];
+
+    // Create squirrel mesh
+    function createSquirrel(): THREE.Group {
+      const group = new THREE.Group();
+      const bodyMat = new THREE.MeshStandardMaterial({ color: 0x8b4513, flatShading: true });
+      const bellyMat = new THREE.MeshStandardMaterial({ color: 0xd2b48c, flatShading: true });
+
+      // Body
+      const bodyGeo = new THREE.SphereGeometry(0.2, 6, 4);
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.scale.set(1, 0.8, 1.2);
+      body.position.y = 0.2;
+      body.castShadow = true;
+      group.add(body);
+
+      // Head
+      const headGeo = new THREE.SphereGeometry(0.12, 6, 4);
+      const head = new THREE.Mesh(headGeo, bodyMat);
+      head.position.set(0, 0.3, 0.2);
+      head.castShadow = true;
+      group.add(head);
+
+      // Ears (tiny cones)
+      const earGeo = new THREE.ConeGeometry(0.04, 0.08, 4);
+      const earL = new THREE.Mesh(earGeo, bodyMat);
+      earL.position.set(-0.06, 0.42, 0.18);
+      group.add(earL);
+      const earR = new THREE.Mesh(earGeo, bodyMat);
+      earR.position.set(0.06, 0.42, 0.18);
+      group.add(earR);
+
+      // Fluffy tail (curved cylinder approximation)
+      const tailGeo = new THREE.SphereGeometry(0.15, 5, 4);
+      const tail = new THREE.Mesh(tailGeo, bodyMat);
+      tail.scale.set(0.6, 1.5, 0.6);
+      tail.position.set(0, 0.35, -0.25);
+      tail.rotation.x = 0.5;
+      tail.castShadow = true;
+      group.add(tail);
+
+      // Legs (simple cylinders)
+      const legGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.12, 4);
+      const legFL = new THREE.Mesh(legGeo, bodyMat);
+      legFL.position.set(-0.08, 0.06, 0.1);
+      group.add(legFL);
+      const legFR = new THREE.Mesh(legGeo, bodyMat);
+      legFR.position.set(0.08, 0.06, 0.1);
+      group.add(legFR);
+      const legBL = new THREE.Mesh(legGeo, bodyMat);
+      legBL.position.set(-0.1, 0.06, -0.1);
+      group.add(legBL);
+      const legBR = new THREE.Mesh(legGeo, bodyMat);
+      legBR.position.set(0.1, 0.06, -0.1);
+      group.add(legBR);
+
+      return group;
+    }
+
+    // Create rabbit mesh
+    function createRabbit(): THREE.Group {
+      const group = new THREE.Group();
+      const bodyMat = new THREE.MeshStandardMaterial({ color: 0xc4a574, flatShading: true });
+      const whiteMat = new THREE.MeshStandardMaterial({ color: 0xffffff, flatShading: true });
+
+      // Body
+      const bodyGeo = new THREE.SphereGeometry(0.25, 6, 4);
+      const body = new THREE.Mesh(bodyGeo, bodyMat);
+      body.scale.set(0.9, 0.8, 1.1);
+      body.position.y = 0.22;
+      body.castShadow = true;
+      group.add(body);
+
+      // Head
+      const headGeo = new THREE.SphereGeometry(0.15, 6, 4);
+      const head = new THREE.Mesh(headGeo, bodyMat);
+      head.position.set(0, 0.35, 0.22);
+      head.castShadow = true;
+      group.add(head);
+
+      // Long ears
+      const earGeo = new THREE.CapsuleGeometry(0.04, 0.2, 2, 4);
+      const earL = new THREE.Mesh(earGeo, bodyMat);
+      earL.position.set(-0.06, 0.55, 0.2);
+      earL.rotation.x = -0.2;
+      earL.rotation.z = -0.15;
+      group.add(earL);
+      const earR = new THREE.Mesh(earGeo, bodyMat);
+      earR.position.set(0.06, 0.55, 0.2);
+      earR.rotation.x = -0.2;
+      earR.rotation.z = 0.15;
+      group.add(earR);
+
+      // Fluffy tail
+      const tailGeo = new THREE.SphereGeometry(0.08, 5, 4);
+      const tail = new THREE.Mesh(tailGeo, whiteMat);
+      tail.position.set(0, 0.2, -0.28);
+      tail.castShadow = true;
+      group.add(tail);
+
+      return group;
+    }
+
+    // Spawn wildlife in the forest areas
+    for (let i = 0; i < 8; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 15 + Math.random() * 25; // In the forest, not clearing
+      const x = Math.cos(angle) * dist;
+      const z = Math.sin(angle) * dist;
+
+      // Clamp to world bounds
+      if (Math.abs(x) < WORLD_HALF_SIZE * 0.9 && Math.abs(z) < WORLD_HALF_SIZE * 0.9) {
+        const height = terrainBuilder.getHeightAt(x, z);
+        const type = Math.random() > 0.5 ? 'squirrel' : 'rabbit';
+        const mesh = type === 'squirrel' ? createSquirrel() : createRabbit();
+        mesh.position.set(x, height, z);
+        mesh.scale.setScalar(0.8 + Math.random() * 0.4);
+        scene.add(mesh);
+
+        wildlife.push({
+          mesh,
+          position: new THREE.Vector3(x, height, z),
+          targetPosition: null,
+          isMoving: false,
+          idleTimer: 1 + Math.random() * 4,
+          speed: 2.5 + Math.random() * 1.5,
+          hopPhase: Math.random() * Math.PI * 2,
+          type,
+        });
+      }
+    }
+    wildlifeRef.current = wildlife;
+
     // === MAGIC ORB (floating above building entrance) ===
     // Small glowing orb as a beacon/waypoint
     const orbGeometry = new THREE.IcosahedronGeometry(0.5, 1);
@@ -283,18 +471,24 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     function selectNewDestination(data: MinionSceneData): void {
       const halfSize = WORLD_HALF_SIZE * 0.8; // Stay within most of the cozy area
 
-      // Pick a random point, avoiding building
+      // Pick a random point, avoiding building and water (unless on bridge)
       let targetX: number, targetZ: number;
       let attempts = 0;
       do {
         targetX = (Math.random() - 0.5) * halfSize * 2;
         targetZ = (Math.random() - 0.5) * halfSize * 2;
         attempts++;
-      } while (isInsideBuilding(targetX, targetZ) && attempts < 10);
+      } while ((isInsideBuilding(targetX, targetZ) || !terrainBuilder.isWalkable(targetX, targetZ)) && attempts < 15);
 
-      const targetY = getGroundHeight(targetX, targetZ);
-      data.targetPosition = new THREE.Vector3(targetX, targetY, targetZ);
-      data.isMoving = true;
+      // If we found a valid spot, move there
+      if (attempts < 15) {
+        const targetY = getGroundHeight(targetX, targetZ);
+        data.targetPosition = new THREE.Vector3(targetX, targetY, targetZ);
+        data.isMoving = true;
+      } else {
+        // Couldn't find a valid spot, stay idle
+        data.idleTimer = 1 + Math.random() * 2;
+      }
     }
 
     // Animation loop
@@ -339,6 +533,114 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       // Animate magic orb - gentle floating rotation
       orb.rotation.y += 0.008;
       orb.position.y = buildingY + 6 + Math.sin(elapsedTime * 0.8) * 0.3;
+
+      // Animate cloud shadows - drift across terrain
+      for (const cloud of cloudShadowsRef.current) {
+        cloud.offset.x += cloud.speed.x * deltaTime;
+        cloud.offset.y += cloud.speed.y * deltaTime;
+
+        // Wrap around world bounds
+        const halfWorld = WORLD_HALF_SIZE * 1.5;
+        if (cloud.offset.x > halfWorld) cloud.offset.x = -halfWorld;
+        if (cloud.offset.y > halfWorld) cloud.offset.y = -halfWorld;
+
+        cloud.mesh.position.x = cloud.offset.x;
+        cloud.mesh.position.z = cloud.offset.y;
+
+        // Subtle opacity variation based on time
+        const baseMat = cloud.mesh.material as THREE.MeshBasicMaterial;
+        baseMat.opacity = 0.06 + Math.sin(elapsedTime * 0.3 + cloud.offset.x * 0.1) * 0.03;
+      }
+
+      // Animate wildlife (squirrels, rabbits hopping)
+      for (const animal of wildlifeRef.current) {
+        animal.hopPhase += deltaTime * (animal.isMoving ? 12 : 2);
+
+        if (animal.isMoving && animal.targetPosition) {
+          // Move toward target with hopping motion
+          const direction = animal.targetPosition.clone().sub(animal.position);
+          const horizontalDir = new THREE.Vector3(direction.x, 0, direction.z);
+          const horizontalDist = horizontalDir.length();
+
+          // Face movement direction
+          if (horizontalDist > 0.01) {
+            animal.mesh.rotation.y = Math.atan2(horizontalDir.x, horizontalDir.z);
+          }
+
+          const moveDistance = animal.speed * deltaTime;
+
+          if (horizontalDist < moveDistance) {
+            // Reached destination
+            animal.position.copy(animal.targetPosition);
+            animal.isMoving = false;
+            animal.targetPosition = null;
+            animal.idleTimer = 2 + Math.random() * 5; // Longer idle for animals
+          } else {
+            // Calculate next position
+            horizontalDir.normalize().multiplyScalar(moveDistance);
+            const nextX = animal.position.x + horizontalDir.x;
+            const nextZ = animal.position.z + horizontalDir.z;
+
+            // Check if next position is walkable (not in water unless on bridge)
+            if (terrainBuilder.isWalkable(nextX, nextZ)) {
+              // Move with hopping
+              animal.position.x = nextX;
+              animal.position.z = nextZ;
+              animal.position.y = terrainBuilder.getHeightAt(animal.position.x, animal.position.z);
+            } else {
+              // Hit water - stop and find new path
+              animal.isMoving = false;
+              animal.targetPosition = null;
+              animal.idleTimer = 0.5 + Math.random();
+            }
+          }
+
+          // Hopping bounce
+          const hopHeight = Math.abs(Math.sin(animal.hopPhase)) * 0.4;
+          animal.mesh.position.set(
+            animal.position.x,
+            animal.position.y + hopHeight,
+            animal.position.z
+          );
+
+          // Tilt during hop
+          animal.mesh.rotation.x = Math.sin(animal.hopPhase) * 0.15;
+
+        } else {
+          // Idle - occasional small movements
+          animal.idleTimer -= deltaTime;
+
+          if (animal.idleTimer <= 0) {
+            // Pick new nearby target - try up to 5 times to find walkable spot
+            let foundTarget = false;
+            for (let attempt = 0; attempt < 5 && !foundTarget; attempt++) {
+              const angle = Math.random() * Math.PI * 2;
+              const dist = 3 + Math.random() * 8;
+              const targetX = animal.position.x + Math.cos(angle) * dist;
+              const targetZ = animal.position.z + Math.sin(angle) * dist;
+
+              // Keep in bounds, away from building, and on walkable terrain
+              if (Math.abs(targetX) < WORLD_HALF_SIZE * 0.85 &&
+                  Math.abs(targetZ) < WORLD_HALF_SIZE * 0.85 &&
+                  Math.sqrt(targetX * targetX + targetZ * targetZ) > 12 &&
+                  terrainBuilder.isWalkable(targetX, targetZ)) {
+                const targetY = terrainBuilder.getHeightAt(targetX, targetZ);
+                animal.targetPosition = new THREE.Vector3(targetX, targetY, targetZ);
+                animal.isMoving = true;
+                foundTarget = true;
+              }
+            }
+            if (!foundTarget) {
+              animal.idleTimer = 1 + Math.random() * 2;
+            }
+          }
+
+          // Gentle idle animation - slight bob and ear twitches
+          const idleBob = Math.sin(elapsedTime * 2 + animal.hopPhase) * 0.02;
+          animal.mesh.position.y = animal.position.y + idleBob;
+          animal.mesh.rotation.x = 0;
+        }
+      }
 
       // Animate wizard (gentle idle animation)
       wizardInstance.animator.update(deltaTime, elapsedTime, false);
@@ -388,16 +690,28 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
             data.targetPosition = null;
             data.idleTimer = 1 + Math.random() * 3;
           } else {
-            // Move horizontally
+            // Calculate next position
             horizontalDir.normalize().multiplyScalar(moveDistance);
-            data.currentPosition.x += horizontalDir.x;
-            data.currentPosition.z += horizontalDir.z;
+            const nextX = data.currentPosition.x + horizontalDir.x;
+            const nextZ = data.currentPosition.z + horizontalDir.z;
 
-            // Update Y to follow terrain
-            data.currentPosition.y = getGroundHeight(
-              data.currentPosition.x,
-              data.currentPosition.z
-            );
+            // Check if next position is walkable (not in water unless on bridge)
+            if (terrainBuilder.isWalkable(nextX, nextZ)) {
+              // Move horizontally
+              data.currentPosition.x = nextX;
+              data.currentPosition.z = nextZ;
+
+              // Update Y to follow terrain
+              data.currentPosition.y = getGroundHeight(
+                data.currentPosition.x,
+                data.currentPosition.z
+              );
+            } else {
+              // Hit water - stop and pick a new destination
+              data.isMoving = false;
+              data.targetPosition = null;
+              data.idleTimer = 0.5 + Math.random(); // Brief pause before new path
+            }
           }
 
           // Apply position with bounce from animator
@@ -464,6 +778,16 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       dayNightCycleRef.current?.dispose();
       torchManagerRef.current?.dispose();
       wizardInstance.dispose();
+      // Cleanup wildlife
+      for (const animal of wildlifeRef.current) {
+        scene.remove(animal.mesh);
+      }
+      wildlifeRef.current = [];
+      // Cleanup cloud shadows
+      for (const cloud of cloudShadowsRef.current) {
+        scene.remove(cloud.mesh);
+      }
+      cloudShadowsRef.current = [];
       if (container && renderer.domElement.parentNode === container) {
         container.removeChild(renderer.domElement);
       }
