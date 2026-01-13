@@ -13,6 +13,8 @@ import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
 import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager } from '@/lib/lighting';
 import { CameraController } from '@/lib/camera';
+import { TeleportEffect, MagicCircle, ReactionIndicator } from '@/lib/effects';
+import type { ReactionType } from '@/lib/effects';
 
 // Minion data for tracking position and movement
 interface MinionSceneData {
@@ -25,6 +27,8 @@ interface MinionSceneData {
   speed: number;
   isInsideBuilding: boolean;
   torchId: string; // ID for this minion's torch
+  reactionIndicator: ReactionIndicator;
+  personality: 'friendly' | 'cautious' | 'grumpy';
 }
 
 // Building bounds for collision and inside detection
@@ -64,6 +68,8 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const torchManagerRef = useRef<TorchManager | null>(null);
   const interiorLightsRef = useRef<InteriorLight[]>([]);
   const collisionMeshesRef = useRef<THREE.Mesh[]>([]);
+  const teleportEffectRef = useRef<TeleportEffect | null>(null);
+  const magicCircleRef = useRef<MagicCircle | null>(null);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -121,7 +127,24 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
 
               // Calculate wizard position for new minion
               const wizardPos = calculateWizardPosition(minionPos, cameraControllerRef.current.getCurrentPosition());
-              wizard.mesh.position.copy(wizardPos);
+
+              // Play teleport effect
+              const oldWizardPos = wizard.mesh.position.clone();
+              if (teleportEffectRef.current) {
+                teleportEffectRef.current.playDisappear(oldWizardPos);
+              }
+
+              setTimeout(() => {
+                wizard.mesh.position.copy(wizardPos);
+                const dirToMinion = new THREE.Vector3()
+                  .subVectors(minionPos, wizardPos)
+                  .normalize();
+                wizard.mesh.rotation.y = Math.atan2(dirToMinion.x, dirToMinion.z);
+
+                if (teleportEffectRef.current) {
+                  teleportEffectRef.current.playAppear(wizardPos);
+                }
+              }, 200);
 
               // Trigger camera transition
               cameraControllerRef.current.transitionToMinion({
@@ -136,14 +159,39 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
             // Calculate wizard position (left of minion, facing minion)
             const wizardPos = calculateWizardPosition(minionPos, cameraControllerRef.current.getCurrentPosition());
 
-            // Teleport wizard
-            wizard.mesh.position.copy(wizardPos);
+            // Play teleport effect at old position
+            const oldWizardPos = wizard.mesh.position.clone();
+            if (teleportEffectRef.current) {
+              teleportEffectRef.current.playDisappear(oldWizardPos);
+            }
 
-            // Make wizard face the minion
-            const dirToMinion = new THREE.Vector3()
-              .subVectors(minionPos, wizardPos)
-              .normalize();
-            wizard.mesh.rotation.y = Math.atan2(dirToMinion.x, dirToMinion.z);
+            // Teleport wizard after brief delay (let disappear effect start)
+            setTimeout(() => {
+              wizard.mesh.position.copy(wizardPos);
+
+              // Make wizard face the minion
+              const dirToMinion = new THREE.Vector3()
+                .subVectors(minionPos, wizardPos)
+                .normalize();
+              wizard.mesh.rotation.y = Math.atan2(dirToMinion.x, dirToMinion.z);
+
+              // Play appear effect at new position
+              if (teleportEffectRef.current) {
+                teleportEffectRef.current.playAppear(wizardPos);
+              }
+              if (magicCircleRef.current) {
+                magicCircleRef.current.show(wizardPos);
+                setTimeout(() => magicCircleRef.current?.hide(), 500);
+              }
+
+              // Trigger minion reaction after wizard appears
+              setTimeout(() => {
+                if (minionData.reactionIndicator) {
+                  const reaction = getReactionForPersonality(minionData.personality);
+                  minionData.reactionIndicator.show(reaction);
+                }
+              }, 300);
+            }, 200);
 
             // Trigger camera animation
             cameraControllerRef.current.enterConversation({
@@ -159,6 +207,20 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       }
     }
   }, [setSelectedMinion, onMinionClick, enterConversation, transitionToMinion]);
+
+  // Get reaction based on minion personality
+  const getReactionForPersonality = useCallback((personality: 'friendly' | 'cautious' | 'grumpy'): ReactionType => {
+    switch (personality) {
+      case 'friendly':
+        return 'wave'; // Excited wave
+      case 'cautious':
+        return 'exclamation'; // Surprised
+      case 'grumpy':
+        return 'anger'; // Annoyed
+      default:
+        return 'exclamation';
+    }
+  }, []);
 
   // Calculate wizard position for conversation (left of minion from camera's view)
   const calculateWizardPosition = useCallback((minionPos: THREE.Vector3, cameraPos: THREE.Vector3): THREE.Vector3 => {
@@ -366,6 +428,20 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     collisionMeshesRef.current = collisionMeshes;
     cameraController.setCollisionMeshes(collisionMeshes);
 
+    // Create teleport effects
+    const teleportEffect = new TeleportEffect({
+      particleCount: 40,
+      color: 0x9966ff,
+      secondaryColor: 0xffcc00,
+      duration: 0.4,
+    });
+    scene.add(teleportEffect.getGroup());
+    teleportEffectRef.current = teleportEffect;
+
+    const magicCircle = new MagicCircle(1.2, 0x9966ff);
+    scene.add(magicCircle.getMesh());
+    magicCircleRef.current = magicCircle;
+
     // Add click listener
     renderer.domElement.addEventListener('click', handleClick);
 
@@ -452,9 +528,15 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         wizardInstance.mesh.position.x,
         wizardInstance.mesh.position.z
       );
-      // Gentle bob for wizard
-      const wizardBob = Math.sin(elapsedTime * 1.5) * 0.02;
-      wizardInstance.mesh.position.y = buildingY + 0.5 + wizardBob;
+      // Gentle bob for wizard (only if not in conversation teleport)
+      if (!teleportEffect.isActive()) {
+        const wizardBob = Math.sin(elapsedTime * 1.5) * 0.02;
+        wizardInstance.mesh.position.y = buildingY + 0.5 + wizardBob;
+      }
+
+      // Update teleport effects
+      teleportEffect.update(deltaTime);
+      magicCircle.update(deltaTime);
 
       // Track if any character is inside the building (wizard or minion)
       let anyCharacterInside = wizardIsInside;
@@ -479,6 +561,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         if (data.isInsideBuilding) {
           anyCharacterInside = true;
         }
+
+        // Update reaction indicator
+        data.reactionIndicator.update(deltaTime);
 
         // Skip movement if conversing - minion stays still and faces wizard
         if (isConversing) {
@@ -610,6 +695,8 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       dayNightCycleRef.current?.dispose();
       torchManagerRef.current?.dispose();
       cameraControllerRef.current?.dispose();
+      teleportEffectRef.current?.dispose();
+      magicCircleRef.current?.dispose();
       wizardInstance.dispose();
       if (container && renderer.domElement.parentNode === container) {
         container.removeChild(renderer.domElement);
@@ -692,6 +779,14 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
 
         scene.add(instance.mesh);
 
+        // Create reaction indicator for this minion
+        const reactionIndicator = new ReactionIndicator();
+        instance.mesh.add(reactionIndicator.getGroup());
+
+        // Assign personality based on traits or random
+        const personalities: Array<'friendly' | 'cautious' | 'grumpy'> = ['friendly', 'cautious', 'grumpy'];
+        const personality = personalities[index % personalities.length];
+
         currentMinions.set(minion.id, {
           minionId: minion.id,
           instance,
@@ -702,6 +797,8 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
           speed: 2.0 + Math.random() * 0.5,
           isInsideBuilding: false,
           torchId,
+          reactionIndicator,
+          personality,
         });
       }
     });
@@ -711,6 +808,7 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       if (!minions.find((m) => m.id === minionId)) {
         scene.remove(data.instance.mesh);
         data.instance.dispose();
+        data.reactionIndicator.dispose();
         // Remove associated torch
         if (torchManagerRef.current) {
           torchManagerRef.current.removeTorch(data.torchId);
