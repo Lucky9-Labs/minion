@@ -69,6 +69,10 @@ interface GameStore extends GameState {
   setConversationPhase: (phase: ConversationPhase | null) => void;
   transitionToMinion: (minionId: string) => void;
 
+  // Camera mode (for first person toggle)
+  cameraMode: 'isometric' | 'conversation' | 'firstPerson';
+  setCameraMode: (mode: 'isometric' | 'conversation' | 'firstPerson') => void;
+
   // Reset
   resetGame: () => void;
 }
@@ -115,6 +119,7 @@ export const useGameStore = create<GameStore>()(
       ...initialState,
       selectedMinionId: null,
       conversation: initialConversationState,
+      cameraMode: 'isometric' as const,
 
       recruitMinion: (name, role, traits) => {
         const minion: Minion = {
@@ -386,8 +391,12 @@ export const useGameStore = create<GameStore>()(
         });
       },
 
+      setCameraMode: (mode) => {
+        set({ cameraMode: mode });
+      },
+
       resetGame: () => {
-        set({ ...initialState, selectedMinionId: null, conversation: initialConversationState });
+        set({ ...initialState, selectedMinionId: null, conversation: initialConversationState, cameraMode: 'isometric' });
       },
     }),
     {

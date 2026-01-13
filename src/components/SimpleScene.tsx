@@ -12,10 +12,11 @@ import type { ExclusionZone } from '@/lib/terrain';
 import { createVillagePaths } from '@/lib/terrain/VillagePaths';
 import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
 import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
-import { DayNightCycle, TorchManager } from '@/lib/lighting';
+import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
 import { CameraController } from '@/lib/camera';
-import { TeleportEffect, MagicCircle, ReactionIndicator } from '@/lib/effects';
+import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall } from '@/lib/effects';
 import type { ReactionType } from '@/lib/effects';
+import { IslandEdgeBuilder } from '@/lib/terrain';
 import { WizardBehavior } from '@/lib/wizard';
 import { useProjectStore } from '@/store/projectStore';
 import {
@@ -23,6 +24,7 @@ import {
   setProjectBuildingSelected,
   type ProjectBuildingMesh,
 } from '@/lib/projectBuildings';
+import { FirstPersonHands } from '@/lib/FirstPersonHands';
 
 // Minion data for tracking position and movement
 interface MinionSceneData {
@@ -105,6 +107,11 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
   const wizardBehaviorRef = useRef<WizardBehavior | null>(null);
   const wildlifeRef = useRef<WildlifeData[]>([]);
   const cloudShadowsRef = useRef<CloudShadowData[]>([]);
+  const skyEnvironmentRef = useRef<SkyEnvironment | null>(null);
+  const islandEdgeRef = useRef<THREE.Group | null>(null);
+  const waterfallRef = useRef<Waterfall | null>(null);
+  const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
+  const isFirstPersonRef = useRef<boolean>(false);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -342,8 +349,20 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
 
     // Create scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87ceeb);
+    scene.background = null; // Sky environment will handle background
     sceneRef.current = scene;
+
+    // === SKY ENVIRONMENT (gradient sky dome, clouds, stars) ===
+    const skyEnvironment = new SkyEnvironment(scene, {
+      domeRadius: 300,
+      cloudCount: 14,
+      starCount: 800,
+      cloudDistanceMin: 60,
+      cloudDistanceMax: 150,
+      cloudHeightMin: -20,
+      cloudHeightMax: 50,
+    });
+    skyEnvironmentRef.current = skyEnvironment;
 
     // Create camera controller (manages ortho/perspective switching)
     const cameraController = new CameraController(container, {
@@ -433,6 +452,53 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     const terrain = terrainBuilder.build();
     scene.add(terrain);
     terrainBuilderRef.current = terrainBuilder;
+
+    // === FLOATING ISLAND EDGE (rocky cliffs around perimeter) ===
+    // Find where the river exits the terrain for waterfall placement
+    const riverPath = terrainBuilder.getRiverPath();
+    let waterfallAngle = Math.PI * 0.75; // Default angle
+    if (riverPath.length > 0) {
+      // Find the last river segment (where it exits)
+      const lastSegment = riverPath[riverPath.length - 1];
+      waterfallAngle = Math.atan2(lastSegment.end.z, lastSegment.end.x);
+    }
+
+    const islandEdgeBuilder = new IslandEdgeBuilder({
+      islandRadius: DEFAULT_CONTINUOUS_CONFIG.worldSize / 2,
+      cliffDepth: 40,
+      rimHeight: 14,
+      bowlSegments: 20,
+      waterfallAngle,
+      waterfallWidth: 0.5,
+    });
+    const islandEdge = islandEdgeBuilder.build((x, z) => terrainBuilder.getHeightAt(x, z));
+    scene.add(islandEdge);
+    islandEdgeRef.current = islandEdge;
+
+    // === WATERFALL (flowing off the island edge) ===
+    const waterfallPos = islandEdgeBuilder.getWaterfallPosition();
+    const waterfallOrigin = new THREE.Vector3(
+      waterfallPos.x,
+      terrainBuilder.getHeightAt(waterfallPos.x, waterfallPos.z) - 1,
+      waterfallPos.z
+    );
+    const waterfallDirection = new THREE.Vector3(
+      Math.cos(waterfallPos.angle),
+      0,
+      Math.sin(waterfallPos.angle)
+    );
+    const waterfall = new Waterfall(waterfallOrigin, waterfallDirection, {
+      particleCount: 250,
+      width: 8,
+      fallDistance: 45,
+      fallSpeed: 10,
+      spreadFactor: 0.4,
+      mistParticleCount: 60,
+      waterColor: 0x4a9ed9,
+      mistColor: 0xccddee,
+    });
+    scene.add(waterfall.getGroup());
+    waterfallRef.current = waterfall;
 
     // Position building on terrain (at center, which is flat)
     const buildingY = terrainBuilder.getHeightAt(0, 0);
@@ -708,7 +774,18 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       duration: 0.4,
     });
     scene.add(teleportEffect.getGroup());
+
     teleportEffectRef.current = teleportEffect;
+
+    // Create first person hands viewmodel (attached to perspective camera)
+    const firstPersonHands = new FirstPersonHands();
+    firstPersonHands.setVisible(false);
+    // Get the perspective camera from camera controller and add hands to it
+    // Camera must be in the scene for its children to be rendered
+    const perspCamera = cameraController.getPerspCamera();
+    scene.add(perspCamera);
+    perspCamera.add(firstPersonHands.getObject());
+    firstPersonHandsRef.current = firstPersonHands;
 
     const magicCircle = new MagicCircle(1.2, 0x9966ff);
     scene.add(magicCircle.getMesh());
@@ -716,6 +793,131 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
 
     // Add click listener
     renderer.domElement.addEventListener('click', handleClick);
+
+    // === FIRST PERSON MODE INPUT HANDLING ===
+    const fpController = cameraController.getFirstPersonController();
+
+    // Toggle first person mode with Tab key
+    function handleKeyDown(event: KeyboardEvent) {
+      // Toggle first person mode
+      if (event.code === 'Tab') {
+        event.preventDefault();
+        const conversation = useGameStore.getState().conversation;
+        if (conversation.active) return; // Don't toggle during conversation
+
+        if (cameraController.getMode() === 'firstPerson') {
+          // Exit first person
+          exitFirstPersonMode();
+        } else if (cameraController.getMode() === 'isometric' && !cameraController.isTransitioning()) {
+          // Enter first person
+          enterFirstPersonMode();
+        }
+        return;
+      }
+
+      // Forward input to first person controller when in first person mode
+      if (isFirstPersonRef.current) {
+        fpController.handleKeyDown(event);
+      }
+    }
+
+    function handleKeyUp(event: KeyboardEvent) {
+      if (isFirstPersonRef.current) {
+        fpController.handleKeyUp(event);
+      }
+    }
+
+    function handleMouseMove(event: MouseEvent) {
+      if (isFirstPersonRef.current && document.pointerLockElement === renderer.domElement) {
+        fpController.handleMouseMove(event);
+
+        // Apply sway to hands
+        if (firstPersonHandsRef.current) {
+          firstPersonHandsRef.current.setSway(event.movementX, event.movementY);
+        }
+      }
+    }
+
+    function handlePointerLockChange() {
+      if (document.pointerLockElement !== renderer.domElement && isFirstPersonRef.current) {
+        // Pointer lock was released while in first person - exit first person mode
+        exitFirstPersonMode();
+      }
+    }
+
+    function enterFirstPersonMode() {
+      const wizard = wizardRef.current;
+      if (!wizard || cameraController.isTransitioning()) return;
+
+      // Stop wizard wandering behavior
+      wizardBehaviorRef.current?.enterConversation(); // Reuse this to stop wandering
+
+      // Get wizard position and rotation
+      const wizardPos = wizard.mesh.position.clone();
+      const wizardYaw = wizard.mesh.rotation.y;
+
+      // Enter first person mode
+      cameraController.enterFirstPerson(wizardPos, wizardYaw);
+      isFirstPersonRef.current = true;
+
+      // Update store camera mode
+      useGameStore.getState().setCameraMode('firstPerson');
+
+      // Hide wizard mesh (we're now the wizard)
+      wizard.mesh.visible = false;
+
+      // Show first person hands
+      if (firstPersonHandsRef.current) {
+        firstPersonHandsRef.current.setVisible(true);
+      }
+
+      // Request pointer lock
+      renderer.domElement.requestPointerLock();
+    }
+
+    function exitFirstPersonMode() {
+      if (!isFirstPersonRef.current) return;
+
+      // Exit pointer lock
+      if (document.pointerLockElement === renderer.domElement) {
+        document.exitPointerLock();
+      }
+
+      // Get final position from first person controller
+      const finalPos = fpController.getGroundPosition();
+      const { yaw } = fpController.getRotation();
+
+      // Update wizard position to where we walked to
+      const wizard = wizardRef.current;
+      if (wizard) {
+        wizard.mesh.position.copy(finalPos);
+        wizard.mesh.rotation.y = yaw;
+        wizard.mesh.visible = true;
+
+        // Update wizard behavior home position
+        if (wizardBehaviorRef.current) {
+          wizardBehaviorRef.current.exitConversation();
+        }
+      }
+
+      // Hide first person hands
+      if (firstPersonHandsRef.current) {
+        firstPersonHandsRef.current.setVisible(false);
+      }
+
+      // Exit first person camera mode
+      cameraController.exitFirstPerson();
+      isFirstPersonRef.current = false;
+
+      // Update store camera mode
+      useGameStore.getState().setCameraMode('isometric');
+    }
+
+    // Add event listeners
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('pointerlockchange', handlePointerLockChange);
 
     // Helper function to check if position is inside building
     function isInsideBuilding(x: number, z: number): boolean {
@@ -774,6 +976,17 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       // Update torch manager based on time of day
       const timeOfDay = dayNightCycle.getTimeOfDay();
       torchManager.update(timeOfDay, deltaTime);
+
+      // Update sky environment (gradient colors, clouds, stars)
+      if (skyEnvironmentRef.current) {
+        skyEnvironmentRef.current.update(timeOfDay, deltaTime);
+      }
+
+      // Update waterfall animation and colors
+      if (waterfallRef.current) {
+        waterfallRef.current.update(deltaTime);
+        waterfallRef.current.setTimeOfDay(timeOfDay);
+      }
 
       // Update interior lights based on time of day
       // Night is roughly 0-0.22 and 0.78-1.0
@@ -911,45 +1124,62 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
         }
       }
 
-      // Update wizard wandering behavior
-      const wizardMovement = wizardBehavior.update(
-        deltaTime,
-        wizardInstance.mesh.position
-      );
+      // === FIRST PERSON MODE UPDATE ===
+      if (isFirstPersonRef.current && cameraController.getMode() === 'firstPerson') {
+        // Update first person controller with terrain and collision
+        cameraController.updateFirstPerson(deltaTime, terrainBuilder, collisionMeshesRef.current);
 
-      let wizardIsMoving = false;
-      if (wizardMovement && !teleportEffect.isActive()) {
-        wizardIsMoving = wizardMovement.isMoving;
+        // Update first person hands animation
+        if (firstPersonHandsRef.current) {
+          const isMoving = fpController.isMoving();
+          const speed = fpController.getVelocity().length() / 5; // Normalize to 0-1ish
+          firstPersonHandsRef.current.setBobbing(isMoving, speed);
+          firstPersonHandsRef.current.update(deltaTime, elapsedTime);
+        }
 
-        // Move wizard to new position
-        wizardInstance.mesh.position.x = wizardMovement.targetPosition.x;
-        wizardInstance.mesh.position.z = wizardMovement.targetPosition.z;
+        // Skip wizard wandering updates when in first person
+        wizardIsInside = false; // Don't affect wall culling
+      } else {
+        // Update wizard wandering behavior (only when not in first person)
+        const wizardMovement = wizardBehavior.update(
+          deltaTime,
+          wizardInstance.mesh.position
+        );
 
-        // Face movement direction
-        if (wizardIsMoving) {
-          const dir = new THREE.Vector3()
-            .subVectors(wizardMovement.targetPosition, wizardInstance.mesh.position);
-          if (dir.lengthSq() > 0.001) {
-            wizardInstance.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+        let wizardIsMoving = false;
+        if (wizardMovement && !teleportEffect.isActive()) {
+          wizardIsMoving = wizardMovement.isMoving;
+
+          // Move wizard to new position
+          wizardInstance.mesh.position.x = wizardMovement.targetPosition.x;
+          wizardInstance.mesh.position.z = wizardMovement.targetPosition.z;
+
+          // Face movement direction
+          if (wizardIsMoving) {
+            const dir = new THREE.Vector3()
+              .subVectors(wizardMovement.targetPosition, wizardInstance.mesh.position);
+            if (dir.lengthSq() > 0.001) {
+              wizardInstance.mesh.rotation.y = Math.atan2(dir.x, dir.z);
+            }
           }
         }
-      }
 
-      // Animate wizard
-      wizardInstance.animator.update(deltaTime, elapsedTime, wizardIsMoving);
-      wizardIsInside = isInsideBuilding(
-        wizardInstance.mesh.position.x,
-        wizardInstance.mesh.position.z
-      );
-
-      // Apply bob/bounce (only if not teleporting)
-      if (!teleportEffect.isActive()) {
-        const bounce = wizardInstance.animator.getBounce();
-        const baseY = getGroundHeight(
+        // Animate wizard
+        wizardInstance.animator.update(deltaTime, elapsedTime, wizardIsMoving);
+        wizardIsInside = isInsideBuilding(
           wizardInstance.mesh.position.x,
           wizardInstance.mesh.position.z
         );
-        wizardInstance.mesh.position.y = baseY + bounce;
+
+        // Apply bob/bounce (only if not teleporting)
+        if (!teleportEffect.isActive()) {
+          const bounce = wizardInstance.animator.getBounce();
+          const baseY = getGroundHeight(
+            wizardInstance.mesh.position.x,
+            wizardInstance.mesh.position.z
+          );
+          wizardInstance.mesh.position.y = baseY + bounce;
+        }
       }
 
       // Update teleport effects
@@ -1123,6 +1353,10 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
 
     return () => {
       window.removeEventListener('resize', handleResize);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('pointerlockchange', handlePointerLockChange);
       renderer.domElement.removeEventListener('click', handleClick);
       controls.dispose();
       renderer.dispose();
@@ -1130,9 +1364,15 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       terrainBuilderRef.current?.dispose();
       dayNightCycleRef.current?.dispose();
       torchManagerRef.current?.dispose();
+      skyEnvironmentRef.current?.dispose();
+      waterfallRef.current?.dispose();
+      if (islandEdgeRef.current) {
+        scene.remove(islandEdgeRef.current);
+      }
       cameraControllerRef.current?.dispose();
       teleportEffectRef.current?.dispose();
       magicCircleRef.current?.dispose();
+      firstPersonHandsRef.current?.dispose();
       wizardInstance.dispose();
       // Cleanup wildlife
       for (const animal of wildlifeRef.current) {
