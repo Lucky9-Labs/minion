@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { SimpleScene } from './SimpleScene';
 import { MinionPanel } from './ui/MinionPanel';
 import { QuestPanel } from './ui/QuestPanel';
@@ -10,12 +10,14 @@ import { ConversationPanel } from './ui/ConversationPanel';
 import { WizardProfileFrame } from './ui/WizardProfileFrame';
 import { TargetFrame } from './ui/TargetFrame';
 import { FirstPersonHUD } from './ui/FirstPersonHUD';
+import { InteractionHUD } from './ui/InteractionHUD';
 import { useGameStore } from '@/store/gameStore';
 import { TOWER_FLOORS } from '@/types/game';
 import { useMinionMovement } from '@/lib/questSimulation';
 import { WowIcon } from './ui/WowIcon';
 import { wowTheme } from '@/styles/theme';
 import { initSoundSettings, preloadSounds, playSound } from '@/lib/sounds';
+import type { InteractionMode, MenuOption, Target, DrawnFoundation } from '@/types/interaction';
 
 type ActivePanel = 'minions' | 'quests' | 'vault' | null;
 
@@ -27,6 +29,16 @@ export function GameLayout() {
   const conversation = useGameStore((state) => state.conversation);
   const exitConversation = useGameStore((state) => state.exitConversation);
   const cameraMode = useGameStore((state) => state.cameraMode);
+
+  // Interaction state for first person mode
+  const [interactionMode, setInteractionMode] = useState<InteractionMode>('idle');
+  const [menuOptions, setMenuOptions] = useState<MenuOption[] | null>(null);
+  const [showQuickInfo, setShowQuickInfo] = useState(false);
+  const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
+  const [interactionTarget, setInteractionTarget] = useState<Target | null>(null);
+
+  // Ref to store interaction controller execute function
+  const interactionExecuteRef = useRef<((actionId: string) => void) | null>(null);
 
   // Initialize sound system
   useEffect(() => {
@@ -76,7 +88,20 @@ export function GameLayout() {
     <div className="relative w-full h-screen overflow-hidden" style={{ background: wowTheme.colors.bgDarkest }}>
       {/* 3D Scene - z-0 to be below UI overlays */}
       <div className="absolute inset-0 z-0">
-        <SimpleScene />
+        <SimpleScene
+          onInteractionModeChange={setInteractionMode}
+          onMenuOptionsChange={setMenuOptions}
+          onQuickInfoChange={setShowQuickInfo}
+          onCursorPositionChange={setCursorPosition}
+          onTargetChange={setInteractionTarget}
+          onFoundationComplete={(foundation) => {
+            console.log('Foundation complete:', foundation);
+            // TODO: Open building project creation dialog
+          }}
+          onInteractionControllerReady={(executeAction) => {
+            interactionExecuteRef.current = executeAction;
+          }}
+        />
       </div>
 
       {/* Top bar */}
@@ -323,6 +348,22 @@ export function GameLayout() {
 
       {/* First person mode HUD */}
       <FirstPersonHUD visible={inFirstPerson} />
+
+      {/* Interaction HUD (radial menu, quick info) for first person */}
+      <InteractionHUD
+        visible={inFirstPerson}
+        mode={interactionMode}
+        target={interactionTarget}
+        menuOptions={menuOptions}
+        cursorPosition={cursorPosition}
+        showQuickInfo={showQuickInfo}
+        onMenuSelect={(option) => {
+          interactionExecuteRef.current?.(option.id);
+        }}
+        onMenuCancel={() => {
+          interactionExecuteRef.current?.('cancel');
+        }}
+      />
 
       {/* CSS animations for frames */}
       <style jsx global>{`

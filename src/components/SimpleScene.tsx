@@ -25,6 +25,8 @@ import {
   type ProjectBuildingMesh,
 } from '@/lib/projectBuildings';
 import { FirstPersonHands } from '@/lib/FirstPersonHands';
+import { StaffInteractionController } from '@/lib/interaction';
+import type { InteractionMode, MenuOption, DrawnFoundation } from '@/types/interaction';
 
 // Minion data for tracking position and movement
 interface MinionSceneData {
@@ -80,9 +82,28 @@ interface SimpleSceneProps {
   onMinionClick?: (minionId: string) => void;
   onProjectClick?: (projectId: string) => void;
   selectedProjectId?: string | null;
+  // Interaction callbacks
+  onInteractionModeChange?: (mode: InteractionMode) => void;
+  onMenuOptionsChange?: (options: MenuOption[] | null) => void;
+  onQuickInfoChange?: (show: boolean) => void;
+  onFoundationComplete?: (foundation: DrawnFoundation) => void;
+  onCursorPositionChange?: (pos: { x: number; y: number }) => void;
+  onTargetChange?: (target: import('@/types/interaction').Target | null) => void;
+  onInteractionControllerReady?: (executeAction: (actionId: string) => void) => void;
 }
 
-export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }: SimpleSceneProps) {
+export function SimpleScene({
+  onMinionClick,
+  onProjectClick,
+  selectedProjectId,
+  onInteractionModeChange,
+  onMenuOptionsChange,
+  onQuickInfoChange,
+  onFoundationComplete,
+  onCursorPositionChange,
+  onTargetChange,
+  onInteractionControllerReady,
+}: SimpleSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -110,6 +131,7 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
   const skyEnvironmentRef = useRef<SkyEnvironment | null>(null);
   const islandEdgeRef = useRef<THREE.Group | null>(null);
   const waterfallRef = useRef<Waterfall | null>(null);
+  const interactionControllerRef = useRef<StaffInteractionController | null>(null);
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
   const isFirstPersonRef = useRef<boolean>(false);
 
@@ -791,6 +813,62 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     scene.add(magicCircle.getMesh());
     magicCircleRef.current = magicCircle;
 
+    // === STAFF INTERACTION CONTROLLER (for first person force grab) ===
+    const interactionController = new StaffInteractionController(perspCamera, scene);
+    interactionControllerRef.current = interactionController;
+
+    // Set up ground mesh for targeting and height function for foundation drawing
+    interactionController.setGroundMesh(terrain);
+    interactionController.setHeightFunction((x, z) => terrainBuilder.getHeightAt(x, z));
+
+    // Set up interaction callbacks
+    interactionController.setCallbacks({
+      onMinionChat: (minionId) => {
+        // Trigger chat with minion - switch to conversation mode
+        const minionData = minionsRef.current.get(minionId);
+        if (minionData) {
+          setSelectedMinion(minionId);
+          onMinionClick?.(minionId);
+        }
+      },
+      onMinionQuest: (minionId) => {
+        // Open quest assignment for minion
+        setSelectedMinion(minionId);
+        onMinionClick?.(minionId);
+      },
+      onBuildingStatus: (buildingId) => {
+        onProjectClick?.(buildingId);
+      },
+      onBuildingWorkers: (buildingId) => {
+        onProjectClick?.(buildingId);
+      },
+      onBuildingAesthetic: (buildingId) => {
+        onProjectClick?.(buildingId);
+      },
+      onFoundationComplete: (foundation) => {
+        onFoundationComplete?.(foundation);
+      },
+      onModeChange: (mode) => {
+        onInteractionModeChange?.(mode);
+        // Update menu options when mode changes
+        if (mode === 'menu') {
+          onMenuOptionsChange?.(interactionController.getMenuOptions());
+        } else {
+          onMenuOptionsChange?.(null);
+        }
+      },
+      onStaffStateChange: (state) => {
+        if (firstPersonHandsRef.current) {
+          firstPersonHandsRef.current.setStaffState(state);
+        }
+      },
+    });
+
+    // Expose execute action callback to parent
+    onInteractionControllerReady?.((actionId: string) => {
+      interactionController.executeAction(actionId);
+    });
+
     // Add click listener
     renderer.domElement.addEventListener('click', handleClick);
 
@@ -829,13 +907,39 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
 
     function handleMouseMove(event: MouseEvent) {
       if (isFirstPersonRef.current && document.pointerLockElement === renderer.domElement) {
-        fpController.handleMouseMove(event);
+        // Check if menu is open - if so, don't move camera, just track cursor
+        const interactionMode = interactionControllerRef.current?.getMode();
+        if (interactionMode === 'menu') {
+          // Track absolute cursor position for menu selection
+          onCursorPositionChange?.({ x: event.clientX, y: event.clientY });
+          interactionControllerRef.current?.handleMouseMove(event);
+        } else {
+          // Normal camera movement
+          fpController.handleMouseMove(event);
 
-        // Apply sway to hands
-        if (firstPersonHandsRef.current) {
-          firstPersonHandsRef.current.setSway(event.movementX, event.movementY);
+          // Apply sway to hands
+          if (firstPersonHandsRef.current) {
+            firstPersonHandsRef.current.setSway(event.movementX, event.movementY);
+          }
+
+          // Forward to interaction controller
+          interactionControllerRef.current?.handleMouseMove(event);
         }
       }
+    }
+
+    function handleFirstPersonMouseDown(event: MouseEvent) {
+      if (!isFirstPersonRef.current) return;
+      interactionControllerRef.current?.handleMouseDown(event);
+    }
+
+    function handleFirstPersonMouseUp(event: MouseEvent) {
+      if (!isFirstPersonRef.current) return;
+      interactionControllerRef.current?.handleMouseUp(event);
+
+      // Check if quick info should be shown
+      const showQuickInfo = interactionControllerRef.current?.shouldShowQuickInfo() ?? false;
+      onQuickInfoChange?.(showQuickInfo);
     }
 
     function handlePointerLockChange() {
@@ -917,6 +1021,8 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mousedown', handleFirstPersonMouseDown);
+    document.addEventListener('mouseup', handleFirstPersonMouseUp);
     document.addEventListener('pointerlockchange', handlePointerLockChange);
 
     // Helper function to check if position is inside building
@@ -1127,7 +1233,11 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       // === FIRST PERSON MODE UPDATE ===
       if (isFirstPersonRef.current && cameraController.getMode() === 'firstPerson') {
         // Update first person controller with terrain and collision
-        cameraController.updateFirstPerson(deltaTime, terrainBuilder, collisionMeshesRef.current);
+        // Only update camera movement if not in menu mode
+        const interactionMode = interactionControllerRef.current?.getMode();
+        if (interactionMode !== 'menu') {
+          cameraController.updateFirstPerson(deltaTime, terrainBuilder, collisionMeshesRef.current);
+        }
 
         // Update first person hands animation
         if (firstPersonHandsRef.current) {
@@ -1135,6 +1245,21 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
           const speed = fpController.getVelocity().length() / 5; // Normalize to 0-1ish
           firstPersonHandsRef.current.setBobbing(isMoving, speed);
           firstPersonHandsRef.current.update(deltaTime, elapsedTime);
+        }
+
+        // Update interaction controller (targeting, force grab physics, etc.)
+        if (interactionControllerRef.current) {
+          interactionControllerRef.current.update(deltaTime);
+
+          // Update quick info visibility
+          const showQuickInfo = interactionControllerRef.current.shouldShowQuickInfo();
+          const target = interactionControllerRef.current.getCurrentTarget();
+          if (showQuickInfo && target) {
+            onQuickInfoChange?.(true);
+          }
+
+          // Notify parent of target changes
+          onTargetChange?.(target);
         }
 
         // Skip wizard wandering updates when in first person
@@ -1356,6 +1481,8 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mousedown', handleFirstPersonMouseDown);
+      document.removeEventListener('mouseup', handleFirstPersonMouseUp);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
       renderer.domElement.removeEventListener('click', handleClick);
       controls.dispose();
@@ -1366,6 +1493,7 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       torchManagerRef.current?.dispose();
       skyEnvironmentRef.current?.dispose();
       waterfallRef.current?.dispose();
+      interactionControllerRef.current?.dispose();
       if (islandEdgeRef.current) {
         scene.remove(islandEdgeRef.current);
       }
@@ -1512,6 +1640,13 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
           personality,
           selectionCrystal,
         });
+
+        // Register with interaction controller
+        interactionControllerRef.current?.registerMinion(minion.id, instance.mesh, {
+          name: minion.name,
+          state: minion.state,
+          personality,
+        });
       }
     });
 
@@ -1525,6 +1660,8 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
         if (torchManagerRef.current) {
           torchManagerRef.current.removeTorch(data.torchId);
         }
+        // Unregister from interaction controller
+        interactionControllerRef.current?.unregisterEntity(minionId);
         currentMinions.delete(minionId);
       }
     });
@@ -1614,6 +1751,12 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
         scene.add(building.group);
         currentBuildings.set(project.id, building);
         buildingsChanged = true;
+
+        // Register with interaction controller
+        interactionControllerRef.current?.registerBuilding(project.id, building.group, {
+          name: project.name,
+          buildingType: project.building.type,
+        });
       }
     }
 
@@ -1622,6 +1765,8 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       if (!projects.find((p) => p.id === projectId)) {
         scene.remove(building.group);
         building.dispose();
+        // Unregister from interaction controller
+        interactionControllerRef.current?.unregisterEntity(projectId);
         currentBuildings.delete(projectId);
         buildingsChanged = true;
       }
