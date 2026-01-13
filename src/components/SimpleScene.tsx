@@ -1328,12 +1328,40 @@ export function SimpleScene({
       const inConversation = conversationState.active;
 
       // Animate minions
+      const grabbedMinionId = interactionControllerRef.current?.getGrabbedEntityId();
       minionsRef.current.forEach((data) => {
+        // Check if this minion is being force grabbed
+        const isGrabbed = grabbedMinionId === data.minionId;
+
         // Check if this minion is in conversation
         const isConversing = inConversation && conversationState.minionId === data.minionId;
 
-        // Update animator (not moving if conversing)
-        data.instance.animator.update(deltaTime, elapsedTime, data.isMoving && !isConversing);
+        // Update animator (not moving if conversing or grabbed)
+        data.instance.animator.update(deltaTime, elapsedTime, data.isMoving && !isConversing && !isGrabbed);
+
+        // If grabbed, skip normal movement - ForceGrabController handles position
+        // Add confused flailing animation
+        if (isGrabbed) {
+          const refs = data.instance.refs;
+          // Chaotic limb flailing - mesh position/rotation handled by ForceGrabController
+          const flailSpeed = 12;
+          const flailAmount = 0.8;
+          if (refs.leftHand) {
+            refs.leftHand.rotation.x = Math.sin(elapsedTime * flailSpeed) * flailAmount;
+            refs.leftHand.rotation.z = Math.cos(elapsedTime * flailSpeed * 0.7) * flailAmount * 0.5;
+          }
+          if (refs.rightHand) {
+            refs.rightHand.rotation.x = Math.sin(elapsedTime * flailSpeed + Math.PI) * flailAmount;
+            refs.rightHand.rotation.z = Math.cos(elapsedTime * flailSpeed * 0.7 + Math.PI) * flailAmount * 0.5;
+          }
+          if (refs.leftLeg) {
+            refs.leftLeg.rotation.x = Math.sin(elapsedTime * flailSpeed * 0.8) * flailAmount * 0.6;
+          }
+          if (refs.rightLeg) {
+            refs.rightLeg.rotation.x = Math.sin(elapsedTime * flailSpeed * 0.8 + Math.PI) * flailAmount * 0.6;
+          }
+          return; // Skip all normal movement logic
+        }
 
         // Check if inside building
         data.isInsideBuilding = isInsideBuilding(

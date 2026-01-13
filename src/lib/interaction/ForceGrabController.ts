@@ -17,8 +17,10 @@ export class ForceGrabController {
   // Grab distance from camera
   private grabDistance: number = 3;
 
-  // For visual rotation during grab
+  // For visual rotation during grab (ragdoll wobble)
   private rotationVelocity: THREE.Vector3 = new THREE.Vector3();
+  private wobblePhase: THREE.Vector3 = new THREE.Vector3();
+  private wobbleFrequency: THREE.Vector3 = new THREE.Vector3();
 
   constructor(config?: Partial<SpringConfig>) {
     this.config = { ...DEFAULT_SPRING_CONFIG, ...config };
@@ -40,10 +42,24 @@ export class ForceGrabController {
 
     // Reset velocity
     this.currentVelocity.set(0, 0, 0);
+
+    // Random rotation velocity for tumbling
     this.rotationVelocity.set(
-      (Math.random() - 0.5) * 2,
-      (Math.random() - 0.5) * 2,
-      (Math.random() - 0.5) * 2
+      (Math.random() - 0.5) * 4,
+      (Math.random() - 0.5) * 6, // More spin on Y axis
+      (Math.random() - 0.5) * 4
+    );
+
+    // Random wobble parameters for chaotic floating
+    this.wobblePhase.set(
+      Math.random() * Math.PI * 2,
+      Math.random() * Math.PI * 2,
+      Math.random() * Math.PI * 2
+    );
+    this.wobbleFrequency.set(
+      2 + Math.random() * 3,
+      3 + Math.random() * 2,
+      2 + Math.random() * 3
     );
 
     // Set initial target to current position
@@ -135,12 +151,23 @@ export class ForceGrabController {
     // Integrate position
     currentPos.add(this.currentVelocity.clone().multiplyScalar(deltaTime));
 
-    // Add some rotation for visual interest
-    this.grabbedMesh.rotation.x += this.rotationVelocity.x * deltaTime * 0.5;
-    this.grabbedMesh.rotation.z += this.rotationVelocity.z * deltaTime * 0.3;
+    // Update wobble phase
+    this.wobblePhase.x += deltaTime * this.wobbleFrequency.x;
+    this.wobblePhase.y += deltaTime * this.wobbleFrequency.y;
+    this.wobblePhase.z += deltaTime * this.wobbleFrequency.z;
 
-    // Dampen rotation over time
-    this.rotationVelocity.multiplyScalar(0.98);
+    // Chaotic rotation - spinning tumble + wobble
+    this.grabbedMesh.rotation.x += this.rotationVelocity.x * deltaTime;
+    this.grabbedMesh.rotation.y += this.rotationVelocity.y * deltaTime;
+    this.grabbedMesh.rotation.z += this.rotationVelocity.z * deltaTime;
+
+    // Add wobble overlay for confused floating effect
+    const wobbleAmount = 0.15;
+    this.grabbedMesh.rotation.x += Math.sin(this.wobblePhase.x) * wobbleAmount * deltaTime * 5;
+    this.grabbedMesh.rotation.z += Math.sin(this.wobblePhase.z) * wobbleAmount * deltaTime * 5;
+
+    // Slowly dampen rotation (but keep some chaos)
+    this.rotationVelocity.multiplyScalar(0.995);
   }
 
   /**
