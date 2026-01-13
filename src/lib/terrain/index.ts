@@ -33,3 +33,7 @@ export { ContinuousTerrainBuilder } from './ContinuousTerrainBuilder';
 // Island edge/cliff generation
 export { IslandEdgeBuilder, DEFAULT_ISLAND_EDGE_CONFIG } from './IslandEdgeBuilder';
 export type { IslandEdgeConfig } from './IslandEdgeBuilder';
+
+// Portal gateway (spawn point at true south)
+export { PortalGateway, DEFAULT_PORTAL_CONFIG } from './PortalGateway';
+export type { PortalGatewayConfig } from './PortalGateway';

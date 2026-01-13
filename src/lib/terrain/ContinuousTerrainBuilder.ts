@@ -439,7 +439,8 @@ export class ContinuousTerrainBuilder {
   }
 
   /**
-   * Generate height map with distance-based elevation
+   * Generate height map with directional elevation
+   * North (negative Z) = tallest peaks, South (positive Z) = flat terrain
    */
   private generateHeightMap(): void {
     const { resolution, worldSize, clearingRadius, maxHeight, worldSeed } = this.config;
@@ -454,18 +455,30 @@ export class ContinuousTerrainBuilder {
         // Distance from center (tower)
         const distFromCenter = Math.sqrt(wx * wx + wz * wz);
 
-        // Base height increases with distance from center
-        // Flat in the clearing, then rises
+        // Normalized Z position (-1 = north, +1 = south)
+        const normalizedZ = wz / halfSize;
+
+        // Directional bias: north (negative Z) gets higher terrain
+        // South (positive Z) stays flat
+        const northBias = Math.max(0, -normalizedZ); // 0 at south, 1 at north
+        const southFlatten = Math.max(0, normalizedZ); // 0 at north, 1 at south
+
+        // Base height increases with distance from center AND northern bias
         let baseHeight = 0;
         if (distFromCenter > clearingRadius) {
           const t = (distFromCenter - clearingRadius) / (halfSize - clearingRadius);
-          baseHeight = t * t * maxHeight * 0.6; // Quadratic rise
+          // Northern areas get much higher, southern areas stay low
+          const directionalMultiplier = 0.3 + northBias * 0.9; // 0.3 in south, 1.2 in north
+          baseHeight = t * t * maxHeight * directionalMultiplier;
+
+          // Further flatten southern edge
+          baseHeight *= (1 - southFlatten * 0.7);
         }
 
         // Add noise for natural variation
-        // More noise further from center
+        // More noise in northern (mountainous) areas
         const noiseScale = 0.03;
-        const noiseAmp = Math.min((distFromCenter / halfSize) * maxHeight * 0.4, maxHeight * 0.4);
+        const noiseAmp = Math.min((distFromCenter / halfSize) * maxHeight * 0.4, maxHeight * 0.4) * (0.5 + northBias * 0.8);
         const noiseValue = fbmNoise(wx * noiseScale, wz * noiseScale, worldSeed, 5);
 
         // Combine base height with noise
@@ -478,10 +491,10 @@ export class ContinuousTerrainBuilder {
         }
 
         // Add micro-variation everywhere for ground texture (low-poly bumpiness)
-        // High frequency, low amplitude noise that creates visible facets even in flat areas
+        // Less micro-variation in the south for flatter appearance
         const microNoiseScale = 0.12;
         const microNoise = smoothNoise(wx * microNoiseScale, wz * microNoiseScale, worldSeed + 999);
-        const microHeight = (microNoise - 0.5) * 0.8; // +/- 0.4 units of micro bumps for more visible polygons
+        const microHeight = (microNoise - 0.5) * 0.8 * (0.3 + northBias * 0.7);
 
         this.heightMap[z * resolution + x] = Math.max(0, height + microHeight);
       }
@@ -489,47 +502,56 @@ export class ContinuousTerrainBuilder {
   }
 
   /**
-   * Generate river path winding through the terrain
+   * Generate river path flowing from NNW (mountains) to SEE (lowlands)
+   * River starts at the northern mountains and descends to the southeast
    */
   private generateRiver(): void {
     const { worldSize, clearingRadius } = this.config;
     const halfSize = worldSize / 2;
 
-    // River starts from one edge, winds through, exits another edge
-    // Avoid going through the center clearing
-    const startAngle = this.rng.range(0.3, 0.7) * Math.PI; // Start from one side
-    const startX = Math.cos(startAngle) * halfSize * 0.95;
-    const startZ = Math.sin(startAngle) * halfSize * 0.95;
+    // River starts from NNW (north-northwest) - on the mountains
+    // NNW is approximately -X, -Z direction
+    const startX = -halfSize * 0.4 + this.rng.range(-5, 5); // Slightly west of center
+    const startZ = -halfSize * 0.9 + this.rng.range(-3, 3); // Near north edge
 
     let currentX = startX;
     let currentZ = startZ;
-    let direction = startAngle + Math.PI; // Toward center initially
+
+    // Initial direction: toward SEE (south-southeast)
+    // SEE is approximately +X, +Z direction
+    let direction = Math.PI * 0.35 + this.rng.range(-0.1, 0.1); // ~63 degrees (toward SE)
 
     const segments: RiverSegment[] = [];
     const stepLength = 8;
-    const maxSteps = 30;
+    const maxSteps = 35;
 
     for (let i = 0; i < maxSteps; i++) {
       const prevX = currentX;
       const prevZ = currentZ;
 
-      // Curve away from center when getting close
+      // Curve away from center when getting close to the clearing
       const distFromCenter = Math.sqrt(currentX * currentX + currentZ * currentZ);
-      if (distFromCenter < clearingRadius * 1.8) {
-        // Curve around the clearing
+      if (distFromCenter < clearingRadius * 2.0) {
+        // Curve around the clearing - prefer going east (positive X)
         const angleToCenter = Math.atan2(currentZ, currentX);
         const tangent = angleToCenter + Math.PI / 2;
-        direction = tangent + this.rng.range(-0.3, 0.3);
+        // Bias toward continuing southeast
+        const targetDir = Math.PI * 0.35; // SEE direction
+        direction = tangent * 0.6 + targetDir * 0.4 + this.rng.range(-0.2, 0.2);
       } else {
-        // Add random wandering
-        direction += this.rng.range(-0.4, 0.4);
+        // Add gentle wandering while maintaining SE bias
+        direction += this.rng.range(-0.25, 0.25);
+        // Gently pull back toward SEE direction if drifting too far
+        const targetDir = Math.PI * 0.35;
+        const drift = targetDir - direction;
+        direction += drift * 0.05;
       }
 
       // Move forward
       currentX += Math.cos(direction) * stepLength;
       currentZ += Math.sin(direction) * stepLength;
 
-      // Stop if we exit the world
+      // Stop if we exit the world (should exit at SEE)
       if (Math.abs(currentX) > halfSize || Math.abs(currentZ) > halfSize) {
         segments.push({
           start: { x: prevX, z: prevZ },
@@ -550,51 +572,92 @@ export class ContinuousTerrainBuilder {
   }
 
   /**
-   * Generate winding paths from the tower outward
+   * Generate paths from the tower
+   * Primary path goes south to the portal gateway
+   * Secondary paths go to other less mountainous areas
    */
   private generatePaths(): void {
-    const { worldSize, clearingRadius, pathWidth } = this.config;
+    const { worldSize, clearingRadius } = this.config;
     const halfSize = worldSize / 2;
 
-    // Create 3-4 main paths radiating outward from the tower
-    const numPaths = 3 + Math.floor(this.rng.next() * 2);
-    const angleStep = (Math.PI * 2) / numPaths;
-    const startAngle = this.rng.range(0, angleStep);
+    // PRIMARY PATH: From tower center south to portal gateway
+    // This is the main cobblestone path connecting cottage to portal
+    const mainPath: PathNode[] = [];
+    const mainDirection = Math.PI / 2; // Due south (+Z direction)
 
-    for (let i = 0; i < numPaths; i++) {
+    // Start at south edge of clearing
+    let x = 0;
+    let z = clearingRadius;
+    let direction = mainDirection;
+
+    mainPath.push({ x, z, direction });
+
+    // Path winds south toward portal (at edge of map)
+    const portalZ = halfSize * 0.85; // Portal position
+    const stepLength = 5;
+    const maxSteps = 20;
+
+    for (let j = 0; j < maxSteps; j++) {
+      // Gentle wandering but staying on course south
+      direction = mainDirection + this.rng.range(-0.15, 0.15);
+
+      x += Math.cos(direction) * stepLength;
+      z += Math.sin(direction) * stepLength;
+
+      // Keep path roughly centered (don't drift too far east/west)
+      if (Math.abs(x) > 8) {
+        x *= 0.9; // Pull back toward center
+      }
+
+      mainPath.push({ x, z, direction });
+
+      // Stop when we reach the portal area
+      if (z >= portalZ) {
+        break;
+      }
+    }
+
+    this.mainPaths.push(mainPath);
+
+    // SECONDARY PATHS: A couple of smaller paths to east and west
+    // These avoid the northern mountains
+    const secondaryAngles = [
+      Math.PI * 0.1,  // East-southeast
+      Math.PI * 0.9,  // West-southwest
+    ];
+
+    for (const angle of secondaryAngles) {
       const path: PathNode[] = [];
-      let angle = startAngle + i * angleStep + this.rng.range(-0.3, 0.3);
 
       // Start at edge of clearing
-      let x = Math.cos(angle) * clearingRadius;
-      let z = Math.sin(angle) * clearingRadius;
-      let direction = angle;
+      let sx = Math.cos(angle) * clearingRadius;
+      let sz = Math.sin(angle) * clearingRadius;
+      let sdir = angle;
 
-      path.push({ x, z, direction });
+      path.push({ x: sx, z: sz, direction: sdir });
 
-      // Wind outward
-      const maxSteps = 15;
-      const stepLength = 6;
+      // Wind outward but stay in southern half
+      const secSteps = 10;
 
-      for (let j = 0; j < maxSteps; j++) {
-        // Gradually curve
-        direction += this.rng.range(-0.4, 0.4);
+      for (let j = 0; j < secSteps; j++) {
+        // Gentle wandering
+        sdir += this.rng.range(-0.3, 0.3);
 
-        // Bias slightly outward
-        const angleFromCenter = Math.atan2(z, x);
-        const outwardBias = angleFromCenter - direction;
-        direction += outwardBias * 0.1;
+        // Bias toward staying in southern hemisphere (positive Z)
+        if (sz < 0) {
+          sdir += 0.1; // Turn more south
+        }
 
-        x += Math.cos(direction) * stepLength;
-        z += Math.sin(direction) * stepLength;
+        sx += Math.cos(sdir) * stepLength;
+        sz += Math.sin(sdir) * stepLength;
 
-        // Stop at world edge
-        if (Math.abs(x) > halfSize * 0.9 || Math.abs(z) > halfSize * 0.9) {
-          path.push({ x, z, direction });
+        // Stop at world edge or if going too far north
+        if (Math.abs(sx) > halfSize * 0.8 || sz > halfSize * 0.8 || sz < -halfSize * 0.3) {
+          path.push({ x: sx, z: sz, direction: sdir });
           break;
         }
 
-        path.push({ x, z, direction });
+        path.push({ x: sx, z: sz, direction: sdir });
       }
 
       this.mainPaths.push(path);
@@ -1065,6 +1128,11 @@ export class ContinuousTerrainBuilder {
         // Skip if in exclusion zone (buildings), on river, or on path
         if (this.isInExclusionZone(jx, jz) || this.isOnRiver(jx, jz) || this.isOnPath(jx, jz)) continue;
 
+        // Normalized Z position (-1 = north, +1 = south)
+        const normalizedZ = jz / halfSize;
+        const isSouth = normalizedZ > 0.3; // Southern third of map
+        const isPortalArea = normalizedZ > 0.7 && Math.abs(jx) < halfSize * 0.4; // Near portal
+
         // Density increases with distance from center
         // Some objects in clearing for texture, dense at edges
         let density = 0;
@@ -1079,34 +1147,79 @@ export class ContinuousTerrainBuilder {
 
         const height = this.getHeightAt(jx, jz);
 
-        // What to spawn based on distance and randomness
+        // What to spawn based on distance, position, and randomness
         const roll = this.rng.next();
 
-        if (roll < 0.55) {
-          // Tree (most common)
-          const tree = this.buildTree(distFromCenter);
-          tree.position.set(jx, height, jz);
-          group.add(tree);
-        } else if (roll < 0.65) {
-          // Bush cluster (reduced - expensive)
-          const bush = this.buildBush();
-          bush.position.set(jx, height, jz);
-          group.add(bush);
-        } else if (roll < 0.72) {
-          // Rock cluster (reduced - expensive)
-          const rock = this.buildRockCluster(height);
-          rock.position.set(jx, height, jz);
-          group.add(rock);
-        } else if (roll < 0.88) {
-          // Single rock (cheap)
-          const rock = this.buildRock(height);
-          rock.position.set(jx, height, jz);
-          group.add(rock);
+        // Southern areas get more rocks, northern areas get more trees
+        if (isPortalArea) {
+          // Portal area: mostly LOW rocky outcroppings (not towering boulders)
+          if (roll < 0.50) {
+            // Small rock cluster near portal
+            const rock = this.buildRockCluster(height, 0.5); // Use smaller scale multiplier
+            rock.position.set(jx, height, jz);
+            group.add(rock);
+          } else if (roll < 0.80) {
+            // Small single rock
+            const rock = this.buildRock(height, 0.5); // Use smaller scale multiplier
+            rock.position.set(jx, height, jz);
+            group.add(rock);
+          } else {
+            // Occasional bush
+            const bush = this.buildBush();
+            bush.position.set(jx, height, jz);
+            group.add(bush);
+          }
+        } else if (isSouth) {
+          // Southern area: more rocks, fewer trees
+          if (roll < 0.30) {
+            // Tree
+            const tree = this.buildTree(distFromCenter);
+            tree.position.set(jx, height, jz);
+            group.add(tree);
+          } else if (roll < 0.45) {
+            // Rock cluster
+            const rock = this.buildRockCluster(height);
+            rock.position.set(jx, height, jz);
+            group.add(rock);
+          } else if (roll < 0.70) {
+            // Single rock
+            const rock = this.buildRock(height);
+            rock.position.set(jx, height, jz);
+            group.add(rock);
+          } else if (roll < 0.85) {
+            // Bush
+            const bush = this.buildBush();
+            bush.position.set(jx, height, jz);
+            group.add(bush);
+          } else {
+            // Flower cluster
+            const flowers = this.buildFlowerCluster();
+            flowers.position.set(jx, height, jz);
+            group.add(flowers);
+          }
         } else {
-          // Flower cluster
-          const flowers = this.buildFlowerCluster();
-          flowers.position.set(jx, height, jz);
-          group.add(flowers);
+          // Northern area: more trees (mountainous forest)
+          if (roll < 0.65) {
+            // Tree (most common in mountains)
+            const tree = this.buildTree(distFromCenter);
+            tree.position.set(jx, height, jz);
+            group.add(tree);
+          } else if (roll < 0.75) {
+            // Bush cluster
+            const bush = this.buildBush();
+            bush.position.set(jx, height, jz);
+            group.add(bush);
+          } else if (roll < 0.85) {
+            // Rock (some rocks in mountains too)
+            const rock = this.buildRock(height);
+            rock.position.set(jx, height, jz);
+            group.add(rock);
+          } else {
+            // Flower cluster
+            const flowers = this.buildFlowerCluster();
+            flowers.position.set(jx, height, jz);
+            group.add(flowers);
+          }
         }
       }
     }
@@ -1272,10 +1385,12 @@ export class ContinuousTerrainBuilder {
 
   /**
    * Build a rock
+   * @param height - terrain height (used for color)
+   * @param scaleMultiplier - optional multiplier for rock size (default 1.0)
    */
-  private buildRock(height: number): THREE.Group {
+  private buildRock(height: number, scaleMultiplier: number = 1.0): THREE.Group {
     const group = new THREE.Group();
-    const scale = this.rng.range(0.3, 1.0);
+    const scale = this.rng.range(0.3, 1.0) * scaleMultiplier;
 
     // Color based on elevation
     const color = height > 4 ? 0x616161 : 0x757575;
@@ -1302,8 +1417,10 @@ export class ContinuousTerrainBuilder {
 
   /**
    * Build a cluster of rocks (boulder pile)
+   * @param height - terrain height (used for color)
+   * @param scaleMultiplier - optional multiplier for rock size (default 1.0)
    */
-  private buildRockCluster(height: number): THREE.Group {
+  private buildRockCluster(height: number, scaleMultiplier: number = 1.0): THREE.Group {
     const group = new THREE.Group();
     const numRocks = 2 + Math.floor(this.rng.next() * 3); // 2-4 rocks (reduced from 3-7)
 
@@ -1316,7 +1433,7 @@ export class ContinuousTerrainBuilder {
     });
 
     for (let i = 0; i < numRocks; i++) {
-      const scale = this.rng.range(0.25, 0.7);
+      const scale = this.rng.range(0.25, 0.7) * scaleMultiplier;
 
       // Use dodecahedron for all (consistent, good rock shape)
       const rockGeo = new THREE.DodecahedronGeometry(scale, 0);
