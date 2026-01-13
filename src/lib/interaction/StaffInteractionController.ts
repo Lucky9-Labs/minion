@@ -53,6 +53,9 @@ export class StaffInteractionController {
   private cursorPosition: { x: number; y: number } = { x: 0, y: 0 };
   private isMouseDown: boolean = false;
 
+  // Look-to-select: accumulated mouse delta while menu is open
+  private menuSelectionDelta: { x: number; y: number } = { x: 0, y: 0 };
+
   // Callbacks
   private callbacks: StaffInteractionCallbacks = {};
 
@@ -170,12 +173,32 @@ export class StaffInteractionController {
   handleMouseMove(event: MouseEvent): void {
     this.cursorPosition = { x: event.clientX, y: event.clientY };
 
+    // Accumulate delta for look-to-select when menu is open
+    if (this.state.mode === 'menu') {
+      // Use movementX/Y for pointer lock delta, or calculate from position change
+      const deltaX = event.movementX ?? 0;
+      const deltaY = event.movementY ?? 0;
+      this.menuSelectionDelta.x += deltaX;
+      this.menuSelectionDelta.y += deltaY;
+    }
+
     if (this.state.mode === 'drawing') {
       // Update drawing position
       const target = this.targetingSystem.getTarget();
       if (target && target.type === 'ground') {
         this.foundationDrawer.updatePosition(target.position);
       }
+    }
+  }
+
+  /**
+   * Handle raw mouse movement delta (for pointer lock mode)
+   * Call this from the pointer lock mousemove handler
+   */
+  handleMouseDelta(deltaX: number, deltaY: number): void {
+    if (this.state.mode === 'menu') {
+      this.menuSelectionDelta.x += deltaX;
+      this.menuSelectionDelta.y += deltaY;
     }
   }
 
@@ -252,6 +275,8 @@ export class StaffInteractionController {
       case 'menu':
         this.staffBeam.setMode('aiming');
         this.callbacks.onStaffStateChange?.('charging');
+        // Reset selection delta when entering menu mode
+        this.menuSelectionDelta = { x: 0, y: 0 };
         break;
       case 'idle':
       default:
@@ -383,6 +408,13 @@ export class StaffInteractionController {
 
   getCursorPosition(): { x: number; y: number } {
     return this.cursorPosition;
+  }
+
+  /**
+   * Get accumulated mouse delta for look-to-select menu
+   */
+  getSelectionDelta(): { x: number; y: number } {
+    return { ...this.menuSelectionDelta };
   }
 
   shouldShowQuickInfo(): boolean {

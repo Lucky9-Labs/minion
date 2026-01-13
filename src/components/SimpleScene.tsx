@@ -87,7 +87,7 @@ interface SimpleSceneProps {
   onMenuOptionsChange?: (options: MenuOption[] | null) => void;
   onQuickInfoChange?: (show: boolean) => void;
   onFoundationComplete?: (foundation: DrawnFoundation) => void;
-  onCursorPositionChange?: (pos: { x: number; y: number }) => void;
+  onSelectionDeltaChange?: (delta: { x: number; y: number }) => void;
   onTargetChange?: (target: import('@/types/interaction').Target | null) => void;
   onInteractionControllerReady?: (executeAction: (actionId: string) => void) => void;
 }
@@ -100,7 +100,7 @@ export function SimpleScene({
   onMenuOptionsChange,
   onQuickInfoChange,
   onFoundationComplete,
-  onCursorPositionChange,
+  onSelectionDeltaChange,
   onTargetChange,
   onInteractionControllerReady,
 }: SimpleSceneProps) {
@@ -910,9 +910,12 @@ export function SimpleScene({
         // Check if menu is open - if so, don't move camera, just track cursor
         const interactionMode = interactionControllerRef.current?.getMode();
         if (interactionMode === 'menu') {
-          // Track absolute cursor position for menu selection
-          onCursorPositionChange?.({ x: event.clientX, y: event.clientY });
+          // Accumulate delta for look-to-select menu
           interactionControllerRef.current?.handleMouseMove(event);
+          const delta = interactionControllerRef.current?.getSelectionDelta();
+          if (delta) {
+            onSelectionDeltaChange?.(delta);
+          }
         } else {
           // Normal camera movement
           fpController.handleMouseMove(event);

@@ -10,7 +10,8 @@ interface InteractionHUDProps {
   mode: InteractionMode;
   target: Target | null;
   menuOptions: MenuOption[] | null;
-  cursorPosition: { x: number; y: number };
+  /** Accumulated mouse delta for look-to-select */
+  selectionDelta: { x: number; y: number };
   showQuickInfo: boolean;
   onMenuSelect: (option: MenuOption) => void;
   onMenuCancel: () => void;
@@ -21,7 +22,7 @@ export function InteractionHUD({
   mode,
   target,
   menuOptions,
-  cursorPosition,
+  selectionDelta,
   showQuickInfo,
   onMenuSelect,
   onMenuCancel,
@@ -33,13 +34,13 @@ export function InteractionHUD({
       {/* Quick Info tooltip - shows on tap */}
       <QuickInfo visible={showQuickInfo && mode === 'idle'} target={target} />
 
-      {/* Radial Menu - shows when holding on entity */}
+      {/* Radial Menu - shows when holding on entity (look-to-select) */}
       <RadialMenu
         visible={mode === 'menu' && menuOptions !== null}
         options={menuOptions || []}
         onSelect={onMenuSelect}
         onCancel={onMenuCancel}
-        cursorPosition={cursorPosition}
+        selectionDelta={selectionDelta}
       />
 
       {/* Drawing mode indicator */}

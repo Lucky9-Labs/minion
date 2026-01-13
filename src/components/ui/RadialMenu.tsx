@@ -8,15 +8,16 @@ interface RadialMenuProps {
   options: MenuOption[];
   onSelect: (option: MenuOption) => void;
   onCancel: () => void;
-  cursorPosition: { x: number; y: number };
+  /** Accumulated mouse delta direction for look-to-select */
+  selectionDelta: { x: number; y: number };
 }
 
-const DEAD_ZONE_RADIUS = 40; // pixels from center where no selection happens
-const MENU_RADIUS = 100; // radius of the menu circle
+const DEAD_ZONE_THRESHOLD = 30; // minimum delta magnitude to register selection
 const SEGMENT_INNER_RADIUS = 50;
 const SEGMENT_OUTER_RADIUS = 110;
+const DIRECTION_INDICATOR_RADIUS = 70; // where the direction indicator appears
 
-export function RadialMenu({ visible, options, onSelect, onCancel, cursorPosition }: RadialMenuProps) {
+export function RadialMenu({ visible, options, onSelect, onCancel, selectionDelta }: RadialMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [centerPosition, setCenterPosition] = useState({ x: 0, y: 0 });
@@ -28,26 +29,29 @@ export function RadialMenu({ visible, options, onSelect, onCancel, cursorPositio
         x: window.innerWidth / 2,
         y: window.innerHeight / 2,
       });
+      // Reset selection when menu opens
+      setSelectedIndex(null);
     }
   }, [visible]);
 
-  // Calculate selected segment based on cursor position
+  // Calculate selected segment based on accumulated delta direction (look-to-select)
   useEffect(() => {
     if (!visible || options.length === 0) {
       setSelectedIndex(null);
       return;
     }
 
-    const dx = cursorPosition.x - centerPosition.x;
-    const dy = cursorPosition.y - centerPosition.y;
-    const distance = Math.sqrt(dx * dx + dy * dy);
+    const { x: dx, y: dy } = selectionDelta;
+    const magnitude = Math.sqrt(dx * dx + dy * dy);
 
-    if (distance < DEAD_ZONE_RADIUS) {
+    // Dead zone - need to move enough to select
+    if (magnitude < DEAD_ZONE_THRESHOLD) {
       setSelectedIndex(null);
       return;
     }
 
-    // Calculate angle (0 = right, going clockwise)
+    // Calculate angle from delta (0 = right, going clockwise)
+    // Note: y is inverted because mouse down = positive y, but we want down = south
     let angle = Math.atan2(dy, dx);
     // Adjust so 0 is at top
     angle = angle + Math.PI / 2;
@@ -57,7 +61,7 @@ export function RadialMenu({ visible, options, onSelect, onCancel, cursorPositio
     const index = Math.floor(angle / segmentAngle) % options.length;
 
     setSelectedIndex(index);
-  }, [visible, cursorPosition, centerPosition, options.length]);
+  }, [visible, selectionDelta, options.length]);
 
   // Handle click to select
   const handleClick = useCallback(() => {
@@ -222,15 +226,41 @@ export function RadialMenu({ visible, options, onSelect, onCancel, cursorPositio
         </div>
       )}
 
-      {/* Cursor indicator (shows where mouse is relative to center) */}
-      <div
-        className="absolute w-2 h-2 bg-purple-400 rounded-full shadow-lg"
-        style={{
-          left: cursorPosition.x - 4,
-          top: cursorPosition.y - 4,
-          boxShadow: '0 0 8px rgba(153, 102, 255, 0.8)',
-        }}
-      />
+      {/* Direction indicator (shows look direction based on accumulated delta) */}
+      {(() => {
+        const magnitude = Math.sqrt(selectionDelta.x * selectionDelta.x + selectionDelta.y * selectionDelta.y);
+        if (magnitude < 5) return null;
+
+        // Normalize and scale to indicator radius
+        const normalizedX = (selectionDelta.x / magnitude) * Math.min(magnitude, DIRECTION_INDICATOR_RADIUS);
+        const normalizedY = (selectionDelta.y / magnitude) * Math.min(magnitude, DIRECTION_INDICATOR_RADIUS);
+
+        return (
+          <>
+            {/* Line from center to indicator */}
+            <div
+              className="absolute bg-gradient-to-r from-white/20 to-purple-400/80"
+              style={{
+                left: centerPosition.x,
+                top: centerPosition.y,
+                width: Math.min(magnitude, DIRECTION_INDICATOR_RADIUS),
+                height: 2,
+                transformOrigin: '0 50%',
+                transform: `rotate(${Math.atan2(selectionDelta.y, selectionDelta.x)}rad)`,
+              }}
+            />
+            {/* Direction dot */}
+            <div
+              className="absolute w-3 h-3 bg-purple-400 rounded-full shadow-lg"
+              style={{
+                left: centerPosition.x + normalizedX - 6,
+                top: centerPosition.y + normalizedY - 6,
+                boxShadow: '0 0 12px rgba(153, 102, 255, 0.9)',
+              }}
+            />
+          </>
+        );
+      })()}
 
       <style jsx>{`
         @keyframes radialMenuFadeIn {

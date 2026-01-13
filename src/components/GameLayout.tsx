@@ -34,7 +34,7 @@ export function GameLayout() {
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('idle');
   const [menuOptions, setMenuOptions] = useState<MenuOption[] | null>(null);
   const [showQuickInfo, setShowQuickInfo] = useState(false);
-  const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0 });
+  const [selectionDelta, setSelectionDelta] = useState({ x: 0, y: 0 });
   const [interactionTarget, setInteractionTarget] = useState<Target | null>(null);
 
   // Ref to store interaction controller execute function
@@ -92,7 +92,7 @@ export function GameLayout() {
           onInteractionModeChange={setInteractionMode}
           onMenuOptionsChange={setMenuOptions}
           onQuickInfoChange={setShowQuickInfo}
-          onCursorPositionChange={setCursorPosition}
+          onSelectionDeltaChange={setSelectionDelta}
           onTargetChange={setInteractionTarget}
           onFoundationComplete={(foundation) => {
             console.log('Foundation complete:', foundation);
@@ -355,7 +355,7 @@ export function GameLayout() {
         mode={interactionMode}
         target={interactionTarget}
         menuOptions={menuOptions}
-        cursorPosition={cursorPosition}
+        selectionDelta={selectionDelta}
         showQuickInfo={showQuickInfo}
         onMenuSelect={(option) => {
           interactionExecuteRef.current?.(option.id);
