@@ -9,9 +9,12 @@ import type {
   Postcard,
   MinionRole,
   MinionTrait,
+  MinionState,
   QuestPhase,
   TowerFloor,
   ArtifactType,
+  ConversationState,
+  ConversationPhase,
 } from '@/types/game';
 
 function generateId(): string {
@@ -59,6 +62,13 @@ interface GameStore extends GameState {
   selectedMinionId: string | null;
   setSelectedMinion: (minionId: string | null) => void;
 
+  // Conversation state
+  conversation: ConversationState;
+  enterConversation: (minionId: string) => void;
+  exitConversation: () => void;
+  setConversationPhase: (phase: ConversationPhase | null) => void;
+  transitionToMinion: (minionId: string) => void;
+
   // Reset
   resetGame: () => void;
 }
@@ -89,6 +99,13 @@ const initialState: GameState = {
   activeQuestId: null,
 };
 
+const initialConversationState: ConversationState = {
+  active: false,
+  minionId: null,
+  phase: null,
+  previousMinionState: null,
+};
+
 // Track hydration status
 let hasHydrated = false;
 
@@ -97,6 +114,7 @@ export const useGameStore = create<GameStore>()(
     (set, get) => ({
       ...initialState,
       selectedMinionId: null,
+      conversation: initialConversationState,
 
       recruitMinion: (name, role, traits) => {
         const minion: Minion = {
@@ -265,8 +283,111 @@ export const useGameStore = create<GameStore>()(
         set({ selectedMinionId: minionId });
       },
 
+      enterConversation: (minionId) => {
+        const state = get();
+        const minion = state.minions.find((m) => m.id === minionId);
+        if (!minion) return;
+
+        // Store previous state to restore later
+        const previousState = minion.state;
+
+        set({
+          conversation: {
+            active: true,
+            minionId,
+            phase: 'entering',
+            previousMinionState: previousState,
+          },
+          selectedMinionId: minionId,
+          // Set minion to conversing state
+          minions: state.minions.map((m) =>
+            m.id === minionId ? { ...m, state: 'conversing' as MinionState } : m
+          ),
+        });
+      },
+
+      exitConversation: () => {
+        const state = get();
+        const { conversation } = state;
+
+        if (!conversation.active || !conversation.minionId) return;
+
+        // Restore minion's previous state (default to idle)
+        const previousState = conversation.previousMinionState || 'idle';
+
+        set({
+          conversation: {
+            ...conversation,
+            phase: 'exiting',
+          },
+          minions: state.minions.map((m) =>
+            m.id === conversation.minionId
+              ? { ...m, state: previousState as MinionState }
+              : m
+          ),
+        });
+
+        // Clear conversation state after a brief delay (handled by UI)
+        // The UI will call setConversationPhase(null) when animation completes
+      },
+
+      setConversationPhase: (phase) => {
+        const state = get();
+
+        if (phase === null) {
+          // Conversation ended
+          set({
+            conversation: initialConversationState,
+          });
+        } else {
+          set({
+            conversation: {
+              ...state.conversation,
+              phase,
+            },
+          });
+        }
+      },
+
+      transitionToMinion: (minionId) => {
+        const state = get();
+        const { conversation } = state;
+
+        if (!conversation.active) {
+          // Not in conversation, do full enter
+          get().enterConversation(minionId);
+          return;
+        }
+
+        const oldMinionId = conversation.minionId;
+        const newMinion = state.minions.find((m) => m.id === minionId);
+        if (!newMinion) return;
+
+        // Restore old minion's state, set new minion to conversing
+        set({
+          conversation: {
+            ...conversation,
+            minionId,
+            phase: 'entering', // Re-enter animation for new minion
+            previousMinionState: newMinion.state,
+          },
+          selectedMinionId: minionId,
+          minions: state.minions.map((m) => {
+            if (m.id === oldMinionId) {
+              // Restore old minion to idle
+              return { ...m, state: 'idle' as MinionState };
+            }
+            if (m.id === minionId) {
+              // Set new minion to conversing
+              return { ...m, state: 'conversing' as MinionState };
+            }
+            return m;
+          }),
+        });
+      },
+
       resetGame: () => {
-        set({ ...initialState, selectedMinionId: null });
+        set({ ...initialState, selectedMinionId: null, conversation: initialConversationState });
       },
     }),
     {
