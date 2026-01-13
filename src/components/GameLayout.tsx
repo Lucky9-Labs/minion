@@ -2,21 +2,28 @@
 
 import { useState } from 'react';
 import { SimpleScene } from './SimpleScene';
+import { VillageScene } from './VillageScene';
 import { MinionPanel } from './ui/MinionPanel';
 import { QuestPanel } from './ui/QuestPanel';
 import { VaultPanel } from './ui/VaultPanel';
 import { CharacterPanel } from './ui/CharacterPanel';
+import { ProjectPanel } from './ui/ProjectPanel';
 import { useGameStore } from '@/store/gameStore';
+import { useProjectStore } from '@/store/projectStore';
 import { TOWER_FLOORS } from '@/types/game';
 import { useMinionMovement } from '@/lib/questSimulation';
 
 type ActivePanel = 'minions' | 'quests' | 'vault' | null;
+type ViewMode = 'tower' | 'village';
 
 export function GameLayout() {
   const [activePanel, setActivePanel] = useState<ActivePanel>('minions');
+  const [viewMode, setViewMode] = useState<ViewMode>('village');
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const tower = useGameStore((state) => state.tower);
   const minions = useGameStore((state) => state.minions);
   const activeQuestId = useGameStore((state) => state.activeQuestId);
+  const { projects, isScanning } = useProjectStore();
 
   // Animate minion movement during quests
   useMinionMovement();
@@ -25,25 +32,79 @@ export function GameLayout() {
     setActivePanel(activePanel === panel ? null : panel);
   };
 
+  const handleBuildingClick = (projectId: string) => {
+    setSelectedProjectId(projectId);
+  };
+
+  const handleEmptyClick = () => {
+    // TODO: Show new project dialog
+    console.log('Empty space clicked - would start new project');
+  };
+
   return (
     <div className="relative w-full h-screen overflow-hidden">
       {/* 3D Scene - z-0 to be below UI overlays */}
       <div className="absolute inset-0 z-0">
-        <SimpleScene />
+        {viewMode === 'tower' ? (
+          <SimpleScene />
+        ) : (
+          <VillageScene
+            onBuildingClick={handleBuildingClick}
+            onEmptyClick={handleEmptyClick}
+            selectedProjectId={selectedProjectId}
+          />
+        )}
       </div>
 
       {/* Top bar */}
       <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none">
-        <div className="pointer-events-auto">
+        <div className="pointer-events-auto flex items-center gap-3">
           <div className="bg-gray-900/90 backdrop-blur-sm rounded-lg px-4 py-2 border border-gray-700">
             <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              <span>🏰</span>
-              Mage Tower
+              <span>{viewMode === 'village' ? '🏘️' : '🏰'}</span>
+              {viewMode === 'village' ? 'Chaud Village' : 'Mage Tower'}
             </h1>
+          </div>
+
+          {/* View mode toggle */}
+          <div className="bg-gray-900/90 backdrop-blur-sm rounded-lg p-1 border border-gray-700 flex">
+            <button
+              onClick={() => setViewMode('village')}
+              className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                viewMode === 'village'
+                  ? 'bg-amber-600 text-white'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Village
+            </button>
+            <button
+              onClick={() => setViewMode('tower')}
+              className={`px-3 py-1.5 rounded text-sm transition-colors ${
+                viewMode === 'tower'
+                  ? 'bg-amber-600 text-white'
+                  : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Tower
+            </button>
           </div>
         </div>
 
         <div className="pointer-events-auto flex items-center gap-3">
+          {/* Projects count (village mode) */}
+          {viewMode === 'village' && (
+            <div className="bg-gray-900/90 backdrop-blur-sm rounded-lg px-4 py-2 border border-gray-700">
+              <div className="flex items-center gap-2">
+                <span>🏠</span>
+                <span className="text-white">{projects.length} projects</span>
+                {isScanning && (
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Tower level indicator */}
           <div className="bg-gray-900/90 backdrop-blur-sm rounded-lg px-4 py-2 border border-gray-700">
             <div className="flex items-center gap-2">
@@ -150,6 +211,14 @@ export function GameLayout() {
 
       {/* Character panel for selected minion */}
       <CharacterPanel />
+
+      {/* Project panel for selected building (village mode) */}
+      {viewMode === 'village' && selectedProjectId && (
+        <ProjectPanel
+          projectId={selectedProjectId}
+          onClose={() => setSelectedProjectId(null)}
+        />
+      )}
     </div>
   );
 }
