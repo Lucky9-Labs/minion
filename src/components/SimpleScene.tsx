@@ -11,10 +11,11 @@ import { ContinuousTerrainBuilder, DEFAULT_CONTINUOUS_CONFIG } from '@/lib/terra
 import type { ExclusionZone } from '@/lib/terrain';
 import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
 import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
-import { DayNightCycle, TorchManager } from '@/lib/lighting';
+import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
 import { CameraController } from '@/lib/camera';
-import { TeleportEffect, MagicCircle, ReactionIndicator } from '@/lib/effects';
+import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall } from '@/lib/effects';
 import type { ReactionType } from '@/lib/effects';
+import { IslandEdgeBuilder } from '@/lib/terrain';
 import { WizardBehavior } from '@/lib/wizard';
 
 // Minion data for tracking position and movement
@@ -94,6 +95,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const wizardBehaviorRef = useRef<WizardBehavior | null>(null);
   const wildlifeRef = useRef<WildlifeData[]>([]);
   const cloudShadowsRef = useRef<CloudShadowData[]>([]);
+  const skyEnvironmentRef = useRef<SkyEnvironment | null>(null);
+  const islandEdgeRef = useRef<THREE.Group | null>(null);
+  const waterfallRef = useRef<Waterfall | null>(null);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -308,8 +312,20 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
 
     // Create scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87ceeb);
+    scene.background = null; // Sky environment will handle background
     sceneRef.current = scene;
+
+    // === SKY ENVIRONMENT (gradient sky dome, clouds, stars) ===
+    const skyEnvironment = new SkyEnvironment(scene, {
+      domeRadius: 300,
+      cloudCount: 14,
+      starCount: 800,
+      cloudDistanceMin: 60,
+      cloudDistanceMax: 150,
+      cloudHeightMin: -20,
+      cloudHeightMax: 50,
+    });
+    skyEnvironmentRef.current = skyEnvironment;
 
     // Create camera controller (manages ortho/perspective switching)
     const cameraController = new CameraController(container, {
@@ -399,6 +415,53 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     const terrain = terrainBuilder.build();
     scene.add(terrain);
     terrainBuilderRef.current = terrainBuilder;
+
+    // === FLOATING ISLAND EDGE (rocky cliffs around perimeter) ===
+    // Find where the river exits the terrain for waterfall placement
+    const riverPath = terrainBuilder.getRiverPath();
+    let waterfallAngle = Math.PI * 0.75; // Default angle
+    if (riverPath.length > 0) {
+      // Find the last river segment (where it exits)
+      const lastSegment = riverPath[riverPath.length - 1];
+      waterfallAngle = Math.atan2(lastSegment.end.z, lastSegment.end.x);
+    }
+
+    const islandEdgeBuilder = new IslandEdgeBuilder({
+      islandRadius: DEFAULT_CONTINUOUS_CONFIG.worldSize / 2,
+      cliffDepth: 40,
+      rimHeight: 14,
+      bowlSegments: 20,
+      waterfallAngle,
+      waterfallWidth: 0.5,
+    });
+    const islandEdge = islandEdgeBuilder.build((x, z) => terrainBuilder.getHeightAt(x, z));
+    scene.add(islandEdge);
+    islandEdgeRef.current = islandEdge;
+
+    // === WATERFALL (flowing off the island edge) ===
+    const waterfallPos = islandEdgeBuilder.getWaterfallPosition();
+    const waterfallOrigin = new THREE.Vector3(
+      waterfallPos.x,
+      terrainBuilder.getHeightAt(waterfallPos.x, waterfallPos.z) - 1,
+      waterfallPos.z
+    );
+    const waterfallDirection = new THREE.Vector3(
+      Math.cos(waterfallPos.angle),
+      0,
+      Math.sin(waterfallPos.angle)
+    );
+    const waterfall = new Waterfall(waterfallOrigin, waterfallDirection, {
+      particleCount: 250,
+      width: 8,
+      fallDistance: 45,
+      fallSpeed: 10,
+      spreadFactor: 0.4,
+      mistParticleCount: 60,
+      waterColor: 0x4a9ed9,
+      mistColor: 0xccddee,
+    });
+    scene.add(waterfall.getGroup());
+    waterfallRef.current = waterfall;
 
     // Position building on terrain (at center, which is flat)
     const buildingY = terrainBuilder.getHeightAt(0, 0);
@@ -740,6 +803,17 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       // Update torch manager based on time of day
       const timeOfDay = dayNightCycle.getTimeOfDay();
       torchManager.update(timeOfDay, deltaTime);
+
+      // Update sky environment (gradient colors, clouds, stars)
+      if (skyEnvironmentRef.current) {
+        skyEnvironmentRef.current.update(timeOfDay, deltaTime);
+      }
+
+      // Update waterfall animation and colors
+      if (waterfallRef.current) {
+        waterfallRef.current.update(deltaTime);
+        waterfallRef.current.setTimeOfDay(timeOfDay);
+      }
 
       // Update interior lights based on time of day
       // Night is roughly 0-0.22 and 0.78-1.0
@@ -1096,6 +1170,11 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       terrainBuilderRef.current?.dispose();
       dayNightCycleRef.current?.dispose();
       torchManagerRef.current?.dispose();
+      skyEnvironmentRef.current?.dispose();
+      waterfallRef.current?.dispose();
+      if (islandEdgeRef.current) {
+        scene.remove(islandEdgeRef.current);
+      }
       cameraControllerRef.current?.dispose();
       teleportEffectRef.current?.dispose();
       magicCircleRef.current?.dispose();
