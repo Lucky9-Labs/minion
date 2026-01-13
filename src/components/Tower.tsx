@@ -44,9 +44,9 @@ function FloorMesh({ floor, index, isUnlocked }: FloorMeshProps) {
 
   return (
     <group ref={groupRef} position={[0, baseY, 0]}>
-      {/* Main floor body - with beveled edges for depth */}
+      {/* Main floor body - full height to eliminate gaps */}
       <mesh castShadow receiveShadow position={[0, FLOOR_HEIGHT / 2, 0]}>
-        <boxGeometry args={[FLOOR_WIDTH, FLOOR_HEIGHT * 0.85, FLOOR_DEPTH]} />
+        <boxGeometry args={[FLOOR_WIDTH, FLOOR_HEIGHT, FLOOR_DEPTH]} />
         <meshStandardMaterial
           color={floorColor}
           roughness={0.75}
@@ -56,15 +56,15 @@ function FloorMesh({ floor, index, isUnlocked }: FloorMeshProps) {
         />
       </mesh>
 
-      {/* Stone trim at bottom - creates visual separation */}
-      <mesh castShadow receiveShadow position={[0, 0.08, 0]}>
-        <boxGeometry args={[FLOOR_WIDTH + 0.15, 0.16, FLOOR_DEPTH + 0.15]} />
+      {/* Stone trim at bottom - overlaps with main body for clean seam */}
+      <mesh castShadow receiveShadow position={[0, 0.1, 0]}>
+        <boxGeometry args={[FLOOR_WIDTH + 0.15, 0.2, FLOOR_DEPTH + 0.15]} />
         <meshStandardMaterial color="#3f3f46" roughness={0.9} />
       </mesh>
 
-      {/* Stone trim at top */}
-      <mesh castShadow receiveShadow position={[0, FLOOR_HEIGHT * 0.92, 0]}>
-        <boxGeometry args={[FLOOR_WIDTH + 0.1, 0.12, FLOOR_DEPTH + 0.1]} />
+      {/* Stone trim at top - overlaps with main body */}
+      <mesh castShadow receiveShadow position={[0, FLOOR_HEIGHT - 0.1, 0]}>
+        <boxGeometry args={[FLOOR_WIDTH + 0.1, 0.2, FLOOR_DEPTH + 0.1]} />
         <meshStandardMaterial color="#52525b" roughness={0.85} />
       </mesh>
 
@@ -158,13 +158,13 @@ function TowerRoof({ height }: { height: number }) {
       </mesh>
 
       {/* Conical roof with more segments for smoothness */}
-      <mesh castShadow position={[0, 1.2, 0]}>
+      <mesh castShadow position={[0, 1.2, 0]} rotation={[0, Math.PI / 4, 0]}>
         <coneGeometry args={[2.8, 2.2, 4]} />
         <meshStandardMaterial color="#1e3a5f" roughness={0.7} flatShading />
       </mesh>
 
       {/* Roof edge trim */}
-      <mesh castShadow position={[0, 0.25, 0]}>
+      <mesh castShadow position={[0, 0.25, 0]} rotation={[0, Math.PI / 4, 0]}>
         <cylinderGeometry args={[2.9, 2.9, 0.15, 4]} />
         <meshStandardMaterial color="#0f172a" roughness={0.8} />
       </mesh>

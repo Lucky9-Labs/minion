@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { ContinuousTerrainConfig, PathNode, RiverSegment, BridgeCrossing } from './types';
 import { DEFAULT_CONTINUOUS_CONFIG, BIOME_TREE_CONFIG } from './types';
+import { createRiverMaterial, updateRiverMaterial } from '@/lib/effects/RiverMaterial';
 
 /**
  * Seeded random number generator (LCG)
@@ -88,6 +89,7 @@ export class ContinuousTerrainBuilder {
   private riverPath: RiverSegment[] = [];
   private mainPaths: PathNode[][] = [];
   private bridgeCrossings: BridgeCrossing[] = [];
+  private waterMaterial: THREE.ShaderMaterial | null = null;
 
   constructor(config: ContinuousTerrainConfig = DEFAULT_CONTINUOUS_CONFIG) {
     this.config = config;
@@ -170,8 +172,20 @@ export class ContinuousTerrainBuilder {
 
     // Build ribbon geometry along the river path
     const vertices: number[] = [];
+    const uvs: number[] = [];
     const indices: number[] = [];
-    const waterY = -0.25; // Water surface level
+    // Water offset below terrain surface (sits in carved valley)
+    const waterDepthOffset = -0.15;
+
+    // Calculate total river length for UV mapping
+    let totalLength = 0;
+    const segmentLengths: number[] = [0];
+    for (let i = 1; i < riverPoints.length; i++) {
+      const dx = riverPoints[i].x - riverPoints[i - 1].x;
+      const dz = riverPoints[i].z - riverPoints[i - 1].z;
+      totalLength += Math.sqrt(dx * dx + dz * dz);
+      segmentLengths.push(totalLength);
+    }
 
     for (let i = 0; i < riverPoints.length; i++) {
       const point = riverPoints[i];
@@ -222,19 +236,40 @@ export class ContinuousTerrainBuilder {
         perpZ /= perpLen;
       }
 
+      // UV coordinate along river (0 to 1 along length, scaled for tiling)
+      const uvV = totalLength > 0 ? (segmentLengths[i] / totalLength) * 4 : 0; // Scale for tiling
+
+      // Calculate water height following terrain + offset (in carved valley)
+      // Sample terrain height at center of river at this point
+      const terrainY = this.getHeightAt(point.x, point.z);
+      const waterY = terrainY + waterDepthOffset;
+
+      // Also sample heights at left and right edges for sloped water surface
+      const leftX = point.x + perpX * width / 2;
+      const leftZ = point.z + perpZ * width / 2;
+      const rightX = point.x - perpX * width / 2;
+      const rightZ = point.z - perpZ * width / 2;
+      const leftTerrainY = this.getHeightAt(leftX, leftZ);
+      const rightTerrainY = this.getHeightAt(rightX, rightZ);
+      const leftWaterY = leftTerrainY + waterDepthOffset;
+      const rightWaterY = rightTerrainY + waterDepthOffset;
+
       // Add left and right vertices for this point
-      // Left vertex
+      // Left vertex - follows terrain
       vertices.push(
-        point.x + perpX * width / 2,
-        waterY,
-        point.z + perpZ * width / 2
+        leftX,
+        leftWaterY,
+        leftZ
       );
-      // Right vertex
+      uvs.push(0, uvV); // Left edge U=0
+
+      // Right vertex - follows terrain
       vertices.push(
-        point.x - perpX * width / 2,
-        waterY,
-        point.z - perpZ * width / 2
+        rightX,
+        rightWaterY,
+        rightZ
       );
+      uvs.push(1, uvV); // Right edge U=1
 
       // Create triangles between consecutive pairs
       if (i > 0) {
@@ -248,21 +283,22 @@ export class ContinuousTerrainBuilder {
     // Create the geometry
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
     geometry.setIndex(indices);
     geometry.computeVertexNormals();
 
-    // Water material
-    const waterMaterial = new THREE.MeshStandardMaterial({
-      color: 0x4a90d9,
-      transparent: true,
-      opacity: 0.65,
-      roughness: 0.15,
-      metalness: 0.2,
-      flatShading: true,
-      side: THREE.DoubleSide,
+    // Animated water shader material
+    this.waterMaterial = createRiverMaterial({
+      shallowColor: new THREE.Color(0x5da4d4),
+      deepColor: new THREE.Color(0x1a5a8a),
+      flowSpeed: 0.12,
+      flowDirection: new THREE.Vector2(0, 1), // Flow along river
+      rippleScale: 6.0,
+      rippleStrength: 0.4,
+      opacity: 0.85,
     });
 
-    const waterMesh = new THREE.Mesh(geometry, waterMaterial);
+    const waterMesh = new THREE.Mesh(geometry, this.waterMaterial);
     group.add(waterMesh);
 
     return group;
@@ -1629,6 +1665,15 @@ export class ContinuousTerrainBuilder {
   }
 
   /**
+   * Update animated elements (call in render loop)
+   */
+  updateAnimations(deltaTime: number): void {
+    if (this.waterMaterial) {
+      updateRiverMaterial(this.waterMaterial, deltaTime);
+    }
+  }
+
+  /**
    * Dispose of resources
    */
   dispose(): void {
@@ -1636,5 +1681,9 @@ export class ContinuousTerrainBuilder {
     this.heightMap = new Float32Array(0);
     this.riverPath = [];
     this.mainPaths = [];
+    if (this.waterMaterial) {
+      this.waterMaterial.dispose();
+      this.waterMaterial = null;
+    }
   }
 }
