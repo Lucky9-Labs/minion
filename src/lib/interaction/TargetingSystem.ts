@@ -23,6 +23,7 @@ export class TargetingSystem {
 
   // For highlight effect
   private highlightedMesh: THREE.Object3D | null = null;
+  private highlightedEntityId: string | null = null;
   private originalMaterials: Map<THREE.Mesh, THREE.Material | THREE.Material[]> = new Map();
 
   constructor(camera: THREE.PerspectiveCamera) {
@@ -78,9 +79,6 @@ export class TargetingSystem {
       }
     });
 
-    // Clear previous highlight
-    this.clearHighlight();
-
     // Priority 1: Check minions
     const minionHits = this.raycaster.intersectObjects(minionMeshes, true);
     if (minionHits.length > 0) {
@@ -96,7 +94,11 @@ export class TargetingSystem {
           mesh: entity.mesh,
           entity: entity.data,
         };
-        this.applyHighlight(entity.mesh);
+        // Only update highlight if target changed
+        if (this.highlightedEntityId !== entity.id) {
+          this.clearHighlight();
+          this.applyHighlight(entity.mesh, entity.id);
+        }
         return this.currentTarget;
       }
     }
@@ -116,7 +118,11 @@ export class TargetingSystem {
           mesh: entity.mesh,
           entity: entity.data,
         };
-        this.applyHighlight(entity.mesh);
+        // Only update highlight if target changed
+        if (this.highlightedEntityId !== entity.id) {
+          this.clearHighlight();
+          this.applyHighlight(entity.mesh, entity.id);
+        }
         return this.currentTarget;
       }
     }
@@ -126,6 +132,10 @@ export class TargetingSystem {
       const groundHits = this.raycaster.intersectObject(this.groundMesh, true);
       if (groundHits.length > 0) {
         const hit = groundHits[0];
+        // Clear highlight when targeting ground
+        if (this.highlightedEntityId !== null) {
+          this.clearHighlight();
+        }
         this.currentTarget = {
           type: 'ground',
           id: null,
@@ -138,7 +148,10 @@ export class TargetingSystem {
       }
     }
 
-    // No hit
+    // No hit - clear highlight
+    if (this.highlightedEntityId !== null) {
+      this.clearHighlight();
+    }
     this.currentTarget = null;
     return null;
   }
@@ -157,8 +170,9 @@ export class TargetingSystem {
     return null;
   }
 
-  private applyHighlight(mesh: THREE.Object3D): void {
+  private applyHighlight(mesh: THREE.Object3D, entityId: string): void {
     this.highlightedMesh = mesh;
+    this.highlightedEntityId = entityId;
 
     mesh.traverse((child) => {
       if (child instanceof THREE.Mesh && child.material) {
@@ -207,6 +221,7 @@ export class TargetingSystem {
 
     this.originalMaterials.clear();
     this.highlightedMesh = null;
+    this.highlightedEntityId = null;
   }
 
   getTarget(): Target | null {

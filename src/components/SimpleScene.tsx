@@ -134,6 +134,7 @@ export function SimpleScene({
   const interactionControllerRef = useRef<StaffInteractionController | null>(null);
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
   const isFirstPersonRef = useRef<boolean>(false);
+  const lastDeltaUpdateRef = useRef<number>(0);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -912,9 +913,14 @@ export function SimpleScene({
         if (interactionMode === 'menu') {
           // Accumulate delta for look-to-select menu
           interactionControllerRef.current?.handleMouseMove(event);
-          const delta = interactionControllerRef.current?.getSelectionDelta();
-          if (delta) {
-            onSelectionDeltaChange?.(delta);
+          // Throttle React updates to every 50ms to avoid lag
+          const now = performance.now();
+          if (now - lastDeltaUpdateRef.current > 50) {
+            lastDeltaUpdateRef.current = now;
+            const delta = interactionControllerRef.current?.getSelectionDelta();
+            if (delta) {
+              onSelectionDeltaChange?.(delta);
+            }
           }
         } else {
           // Normal camera movement
