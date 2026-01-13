@@ -127,6 +127,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
             if (store.conversation.minionId !== minionId) {
               transitionToMinion(minionId);
 
+              // Get the new minion data for reaction
+              const newMinionData = minionsRef.current.get(minionId);
+
               // Calculate wizard position for new minion
               const wizardPos = calculateWizardPosition(minionPos, cameraControllerRef.current.getCurrentPosition());
 
@@ -145,6 +148,14 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
 
                 if (teleportEffectRef.current) {
                   teleportEffectRef.current.playAppear(wizardPos);
+                }
+
+                // Trigger reaction on new minion
+                if (newMinionData?.reactionIndicator) {
+                  setTimeout(() => {
+                    const reaction = getReactionForPersonality(newMinionData.personality);
+                    newMinionData.reactionIndicator.show(reaction);
+                  }, 300);
                 }
               }, 200);
 
