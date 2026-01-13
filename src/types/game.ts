@@ -1,7 +1,20 @@
 // Core game types for Mage Tower
 
 export type MinionRole = 'scout' | 'scribe' | 'artificer';
-export type MinionState = 'idle' | 'traveling' | 'working' | 'stuck' | 'returning';
+export type MinionState = 'idle' | 'traveling' | 'working' | 'stuck' | 'returning' | 'conversing';
+
+// Minion personality types for conversation reactions
+export type MinionPersonality = 'friendly' | 'cautious' | 'grumpy';
+
+// Conversation state
+export type ConversationPhase = 'entering' | 'active' | 'exiting';
+
+export interface ConversationState {
+  active: boolean;
+  minionId: string | null;
+  phase: ConversationPhase | null;
+  previousMinionState: MinionState | null; // To restore after conversation
+}
 export type MinionTrait = 'curious' | 'cautious' | 'opinionated' | 'reckless' | 'methodical';
 
 export interface Minion {

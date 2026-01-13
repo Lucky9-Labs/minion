@@ -1,11 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { SimpleScene } from './SimpleScene';
 import { MinionPanel } from './ui/MinionPanel';
 import { QuestPanel } from './ui/QuestPanel';
 import { VaultPanel } from './ui/VaultPanel';
 import { CharacterPanel } from './ui/CharacterPanel';
+import { ConversationPanel } from './ui/ConversationPanel';
 import { useGameStore } from '@/store/gameStore';
 import { TOWER_FLOORS } from '@/types/game';
 import { useMinionMovement } from '@/lib/questSimulation';
@@ -17,6 +18,8 @@ export function GameLayout() {
   const tower = useGameStore((state) => state.tower);
   const minions = useGameStore((state) => state.minions);
   const activeQuestId = useGameStore((state) => state.activeQuestId);
+  const conversation = useGameStore((state) => state.conversation);
+  const exitConversation = useGameStore((state) => state.exitConversation);
 
   // Animate minion movement during quests
   useMinionMovement();
@@ -24,6 +27,21 @@ export function GameLayout() {
   const togglePanel = (panel: ActivePanel) => {
     setActivePanel(activePanel === panel ? null : panel);
   };
+
+  // Handle Escape key to exit conversation
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    if (event.key === 'Escape' && conversation.active && conversation.phase === 'active') {
+      exitConversation();
+    }
+  }, [conversation.active, conversation.phase, exitConversation]);
+
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
+
+  // Hide normal UI during conversation
+  const inConversation = conversation.active;
 
   return (
     <div className="relative w-full h-screen overflow-hidden">
@@ -72,8 +90,8 @@ export function GameLayout() {
         </div>
       </div>
 
-      {/* Navigation buttons */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 pointer-events-auto">
+      {/* Navigation buttons (hidden during conversation) */}
+      <div className={`absolute bottom-4 left-1/2 -translate-x-1/2 flex gap-2 pointer-events-auto transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <NavButton
           icon="👥"
           label="Minions"
@@ -95,8 +113,8 @@ export function GameLayout() {
         />
       </div>
 
-      {/* Side panels */}
-      <div className="absolute top-20 left-4 bottom-20 flex flex-col gap-4 pointer-events-none">
+      {/* Side panels (hidden during conversation) */}
+      <div className={`absolute top-20 left-4 bottom-20 flex flex-col gap-4 pointer-events-none transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div className="pointer-events-auto">
           {activePanel === 'minions' && <MinionPanel />}
           {activePanel === 'quests' && <QuestPanel />}
@@ -104,8 +122,8 @@ export function GameLayout() {
         </div>
       </div>
 
-      {/* Tower floors legend */}
-      <div className="absolute bottom-20 right-4 pointer-events-auto">
+      {/* Tower floors legend (hidden during conversation) */}
+      <div className={`absolute bottom-20 right-4 pointer-events-auto transition-opacity duration-300 ${inConversation ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
         <div className="bg-gray-900/90 backdrop-blur-sm rounded-lg p-3 border border-gray-700">
           <h3 className="text-sm font-medium text-gray-400 mb-2">Tower Floors</h3>
           <div className="space-y-1">
@@ -149,7 +167,10 @@ export function GameLayout() {
       )}
 
       {/* Character panel for selected minion */}
-      <CharacterPanel />
+      {!inConversation && <CharacterPanel />}
+
+      {/* Conversation panel (shown during minion conversation) */}
+      <ConversationPanel />
     </div>
   );
 }

@@ -12,6 +12,7 @@ import type { ExclusionZone } from '@/lib/terrain';
 import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
 import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager } from '@/lib/lighting';
+import { CameraController } from '@/lib/camera';
 
 // Minion data for tracking position and movement
 interface MinionSceneData {
@@ -51,7 +52,9 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
+  const cameraControllerRef = useRef<CameraController | null>(null);
   const minionsRef = useRef<Map<string, MinionSceneData>>(new Map());
+  const wizardRef = useRef<MinionInstance | null>(null);
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2());
   const terrainBuilderRef = useRef<ContinuousTerrainBuilder | null>(null);
@@ -60,21 +63,31 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
   const dayNightCycleRef = useRef<DayNightCycle | null>(null);
   const torchManagerRef = useRef<TorchManager | null>(null);
   const interiorLightsRef = useRef<InteriorLight[]>([]);
+  const collisionMeshesRef = useRef<THREE.Mesh[]>([]);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
   const selectedMinionId = useGameStore((state) => state.selectedMinionId);
   const setSelectedMinion = useGameStore((state) => state.setSelectedMinion);
+  const conversation = useGameStore((state) => state.conversation);
+  const enterConversation = useGameStore((state) => state.enterConversation);
+  const exitConversation = useGameStore((state) => state.exitConversation);
+  const setConversationPhase = useGameStore((state) => state.setConversationPhase);
+  const transitionToMinion = useGameStore((state) => state.transitionToMinion);
 
   // Handle click on canvas
   const handleClick = useCallback((event: MouseEvent) => {
-    if (!containerRef.current || !sceneRef.current || !cameraRef.current) return;
+    if (!containerRef.current || !sceneRef.current) return;
+
+    // Use the camera controller's active camera for raycasting
+    const camera = cameraControllerRef.current?.getCamera() || cameraRef.current;
+    if (!camera) return;
 
     const rect = containerRef.current.getBoundingClientRect();
     mouseRef.current.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouseRef.current.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
-    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    raycasterRef.current.setFromCamera(mouseRef.current, camera);
 
     // Check for minion clicks
     const minionMeshes: THREE.Object3D[] = [];
@@ -92,12 +105,80 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
 
       const minionId = clickedObject.userData.minionId;
       if (minionId) {
+        // Get the minion's position for camera animation
+        const minionData = minionsRef.current.get(minionId);
+        const wizard = wizardRef.current;
+
+        if (minionData && wizard && cameraControllerRef.current) {
+          const minionPos = minionData.currentPosition.clone();
+
+          // Check if already in conversation
+          const store = useGameStore.getState();
+          if (store.conversation.active) {
+            // Transition to different minion
+            if (store.conversation.minionId !== minionId) {
+              transitionToMinion(minionId);
+
+              // Calculate wizard position for new minion
+              const wizardPos = calculateWizardPosition(minionPos, cameraControllerRef.current.getCurrentPosition());
+              wizard.mesh.position.copy(wizardPos);
+
+              // Trigger camera transition
+              cameraControllerRef.current.transitionToMinion({
+                minionPosition: minionPos,
+                wizardPosition: wizardPos,
+              });
+            }
+          } else {
+            // Enter conversation mode
+            enterConversation(minionId);
+
+            // Calculate wizard position (left of minion, facing minion)
+            const wizardPos = calculateWizardPosition(minionPos, cameraControllerRef.current.getCurrentPosition());
+
+            // Teleport wizard
+            wizard.mesh.position.copy(wizardPos);
+
+            // Make wizard face the minion
+            const dirToMinion = new THREE.Vector3()
+              .subVectors(minionPos, wizardPos)
+              .normalize();
+            wizard.mesh.rotation.y = Math.atan2(dirToMinion.x, dirToMinion.z);
+
+            // Trigger camera animation
+            cameraControllerRef.current.enterConversation({
+              minionPosition: minionPos,
+              wizardPosition: wizardPos,
+            });
+          }
+        }
+
         setSelectedMinion(minionId);
         onMinionClick?.(minionId);
         return;
       }
     }
-  }, [setSelectedMinion, onMinionClick]);
+  }, [setSelectedMinion, onMinionClick, enterConversation, transitionToMinion]);
+
+  // Calculate wizard position for conversation (left of minion from camera's view)
+  const calculateWizardPosition = useCallback((minionPos: THREE.Vector3, cameraPos: THREE.Vector3): THREE.Vector3 => {
+    // Direction from camera to minion
+    const cameraToMinion = new THREE.Vector3()
+      .subVectors(minionPos, cameraPos)
+      .normalize();
+
+    // Left offset (perpendicular to camera direction)
+    const leftOffset = new THREE.Vector3()
+      .crossVectors(new THREE.Vector3(0, 1, 0), cameraToMinion)
+      .normalize()
+      .multiplyScalar(2.5);
+
+    // Position wizard to the left of minion
+    const wizardPos = minionPos.clone().add(leftOffset);
+    wizardPos.y = minionPos.y; // Same height as minion
+
+    return wizardPos;
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -109,22 +190,20 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     scene.background = new THREE.Color(0x87ceeb);
     sceneRef.current = scene;
 
-    // Create isometric camera - cozy but shows terrain
-    const aspect = container.clientWidth / container.clientHeight;
-    const frustumSize = 35; // Larger frustum to show more world
-    const camera = new THREE.OrthographicCamera(
-      -frustumSize * aspect,
-      frustumSize * aspect,
-      frustumSize,
-      -frustumSize,
-      0.1,
-      500
-    );
-    const distance = 50;
-    camera.position.set(distance, distance * 0.6, distance);
-    camera.lookAt(0, 2, 0);
-    camera.zoom = 1.0; // Default zoom
-    camera.updateProjectionMatrix();
+    // Create camera controller (manages ortho/perspective switching)
+    const cameraController = new CameraController(container, {
+      isometricFrustumSize: 35,
+      isometricDistance: 50,
+      isometricPolarAngle: CAMERA_POLAR_ANGLE,
+      conversationFov: 50,
+      conversationDistance: 8,
+      conversationHeight: 1.5,
+      transitionDuration: 0.8,
+    });
+    cameraControllerRef.current = cameraController;
+
+    // Get the orthographic camera for OrbitControls (used in isometric mode)
+    const camera = cameraController.getOrthoCamera();
     cameraRef.current = camera;
 
     // Create renderer
@@ -255,10 +334,37 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
     wizardInstance.mesh.userData.isWizard = true;
     wizardInstance.mesh.castShadow = true;
     scene.add(wizardInstance.mesh);
+    wizardRef.current = wizardInstance;
 
     // Wizard state for animation
     let wizardIdleTimer = 0;
     let wizardIsInside = false;
+
+    // Collect collision meshes for camera spring arm
+    const collisionMeshes: THREE.Mesh[] = [];
+    buildingRefs.rooms.forEach((roomRef) => {
+      // Add walls as collision objects
+      for (const dir of ['north', 'south', 'east', 'west'] as const) {
+        const wallGroup = roomRef.walls[dir];
+        if (wallGroup) {
+          wallGroup.traverse((child) => {
+            if (child instanceof THREE.Mesh) {
+              collisionMeshes.push(child);
+            }
+          });
+        }
+      }
+      // Add roof as collision
+      if (roomRef.roof) {
+        roomRef.roof.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            collisionMeshes.push(child);
+          }
+        });
+      }
+    });
+    collisionMeshesRef.current = collisionMeshes;
+    cameraController.setCollisionMeshes(collisionMeshes);
 
     // Add click listener
     renderer.domElement.addEventListener('click', handleClick);
@@ -353,10 +459,17 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       // Track if any character is inside the building (wizard or minion)
       let anyCharacterInside = wizardIsInside;
 
+      // Get current conversation state
+      const conversationState = useGameStore.getState().conversation;
+      const inConversation = conversationState.active;
+
       // Animate minions
       minionsRef.current.forEach((data) => {
-        // Update animator
-        data.instance.animator.update(deltaTime, elapsedTime, data.isMoving);
+        // Check if this minion is in conversation
+        const isConversing = inConversation && conversationState.minionId === data.minionId;
+
+        // Update animator (not moving if conversing)
+        data.instance.animator.update(deltaTime, elapsedTime, data.isMoving && !isConversing);
 
         // Check if inside building
         data.isInsideBuilding = isInsideBuilding(
@@ -365,6 +478,27 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         );
         if (data.isInsideBuilding) {
           anyCharacterInside = true;
+        }
+
+        // Skip movement if conversing - minion stays still and faces wizard
+        if (isConversing) {
+          // Face the wizard during conversation
+          const wizard = wizardRef.current;
+          if (wizard) {
+            const dirToWizard = new THREE.Vector3()
+              .subVectors(wizard.mesh.position, data.currentPosition)
+              .normalize();
+            data.instance.mesh.rotation.y = Math.atan2(dirToWizard.x, dirToWizard.z);
+          }
+
+          // Apply position with gentle idle bob
+          const bounce = data.instance.animator.getBounce();
+          data.instance.mesh.position.set(
+            data.currentPosition.x,
+            data.currentPosition.y + bounce,
+            data.currentPosition.z
+          );
+          return; // Skip normal movement logic
         }
 
         if (data.isMoving && data.targetPosition) {
@@ -431,26 +565,38 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
         wallCullerRef.current.update(deltaTime);
       }
 
-      // Clamp camera target to terrain bounds
-      controls.target.x = THREE.MathUtils.clamp(controls.target.x, -WORLD_HALF_SIZE * 0.9, WORLD_HALF_SIZE * 0.9);
-      controls.target.z = THREE.MathUtils.clamp(controls.target.z, -WORLD_HALF_SIZE * 0.9, WORLD_HALF_SIZE * 0.9);
+      // Update camera controller
+      cameraController.update(deltaTime);
 
-      controls.update();
-      renderer.render(scene, camera);
+      // Handle controls based on camera mode
+      if (cameraController.getMode() === 'isometric' && !cameraController.isTransitioning()) {
+        // Clamp camera target to terrain bounds
+        controls.target.x = THREE.MathUtils.clamp(controls.target.x, -WORLD_HALF_SIZE * 0.9, WORLD_HALF_SIZE * 0.9);
+        controls.target.z = THREE.MathUtils.clamp(controls.target.z, -WORLD_HALF_SIZE * 0.9, WORLD_HALF_SIZE * 0.9);
+
+        controls.enabled = true;
+        controls.update();
+
+        // Sync camera controller with orbit controls
+        cameraController.syncFromOrbitControls(controls.target);
+      } else {
+        // Disable orbit controls during conversation/transition
+        controls.enabled = false;
+      }
+
+      // Render with the active camera
+      const activeCamera = cameraController.getCamera();
+      renderer.render(scene, activeCamera);
     }
     animate(0);
 
-    // Handle resize - use same frustumSize (35) defined above
+    // Handle resize
     const handleResize = () => {
       if (!container) return;
-      const newAspect = container.clientWidth / container.clientHeight;
-      const fs = 35; // Match frustumSize above
-      camera.left = -fs * newAspect;
-      camera.right = fs * newAspect;
-      camera.top = fs;
-      camera.bottom = -fs;
-      camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      cameraController.handleResize(width, height);
+      renderer.setSize(width, height);
     };
     window.addEventListener('resize', handleResize);
 
@@ -463,6 +609,7 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       terrainBuilderRef.current?.dispose();
       dayNightCycleRef.current?.dispose();
       torchManagerRef.current?.dispose();
+      cameraControllerRef.current?.dispose();
       wizardInstance.dispose();
       if (container && renderer.domElement.parentNode === container) {
         container.removeChild(renderer.domElement);
@@ -585,6 +732,40 @@ export function SimpleScene({ onMinionClick }: SimpleSceneProps) {
       });
     });
   }, [hasHydrated, minions, selectedMinionId]);
+
+  // Handle conversation phase changes
+  useEffect(() => {
+    if (!cameraControllerRef.current) return;
+
+    // When exiting conversation, trigger camera return animation
+    if (conversation.phase === 'exiting') {
+      cameraControllerRef.current.exitConversation();
+
+      // Clear conversation state after animation completes
+      const timer = setTimeout(() => {
+        setConversationPhase(null);
+      }, 1000); // Match transition duration
+
+      return () => clearTimeout(timer);
+    }
+
+    // When entering conversation completes, set phase to active
+    if (conversation.phase === 'entering' && !cameraControllerRef.current.isTransitioning()) {
+      // Camera might still be transitioning, wait a bit
+      const timer = setTimeout(() => {
+        if (!cameraControllerRef.current?.isTransitioning()) {
+          setConversationPhase('active');
+        }
+      }, 900); // Slightly after transition duration
+
+      return () => clearTimeout(timer);
+    }
+  }, [conversation.phase, setConversationPhase]);
+
+  // Expose exit conversation for UI components
+  const handleLeaveConversation = useCallback(() => {
+    exitConversation();
+  }, [exitConversation]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%', cursor: 'pointer' }} />;
 }
