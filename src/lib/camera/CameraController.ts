@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { SpringArm, SpringArmConfig } from './SpringArm';
+import { FirstPersonController, FirstPersonConfig, DEFAULT_FIRST_PERSON_CONFIG } from './FirstPersonController';
 
-export type CameraMode = 'isometric' | 'conversation';
+export type CameraMode = 'isometric' | 'conversation' | 'firstPerson';
 
 export interface ConversationFraming {
   minionPosition: THREE.Vector3;
@@ -24,6 +25,9 @@ export interface CameraControllerConfig {
 
   // Spring arm for collision avoidance
   springArm: SpringArmConfig;
+
+  // First person settings
+  firstPerson: FirstPersonConfig;
 }
 
 export const DEFAULT_CAMERA_CONFIG: CameraControllerConfig = {
@@ -44,6 +48,8 @@ export const DEFAULT_CAMERA_CONFIG: CameraControllerConfig = {
     collisionRadius: 0.5,
     smoothSpeed: 5,
   },
+
+  firstPerson: DEFAULT_FIRST_PERSON_CONFIG,
 };
 
 interface TransitionState {
@@ -73,6 +79,7 @@ export class CameraController {
   private mode: CameraMode = 'isometric';
   private config: CameraControllerConfig;
   private springArm: SpringArm;
+  private firstPersonController: FirstPersonController;
 
   private transition: TransitionState = {
     active: false,
@@ -127,6 +134,10 @@ export class CameraController {
 
     // Create spring arm for collision avoidance
     this.springArm = new SpringArm(this.config.springArm);
+
+    // Create first person controller
+    this.firstPersonController = new FirstPersonController(this.config.firstPerson);
+    this.firstPersonController.setCamera(this.perspCamera);
   }
 
   private initializeIsometricPosition(): void {
@@ -235,6 +246,73 @@ export class CameraController {
   }
 
   /**
+   * Enter first person mode at the given position and rotation
+   */
+  enterFirstPerson(position: THREE.Vector3, yaw: number = 0): void {
+    if (this.mode === 'conversation' || this.transition.active) {
+      return; // Don't allow first person during conversation or transition
+    }
+
+    // Set up first person controller
+    this.firstPersonController.setPosition(position, yaw);
+
+    // Start transition - dolly into the position
+    const eyePosition = position.clone();
+    eyePosition.y += this.config.firstPerson.eyeHeight;
+
+    // Calculate a target point in front of the camera based on yaw
+    const lookDir = new THREE.Vector3(
+      Math.sin(yaw),
+      0,
+      Math.cos(yaw)
+    );
+    const target = eyePosition.clone().add(lookDir.multiplyScalar(10));
+
+    this.startTransition('firstPerson', eyePosition, target, 0.5);
+  }
+
+  /**
+   * Exit first person mode and return to isometric view
+   */
+  exitFirstPerson(): void {
+    if (this.mode !== 'firstPerson' && this.transition.targetMode !== 'firstPerson') {
+      return;
+    }
+
+    // Reset first person input state
+    this.firstPersonController.resetInput();
+
+    // Get current position from first person controller
+    const currentPos = this.firstPersonController.getGroundPosition();
+
+    // Calculate isometric camera position centered on current location
+    const d = this.config.isometricDistance;
+    const position = new THREE.Vector3(
+      currentPos.x + d,
+      currentPos.y + d * 0.6,
+      currentPos.z + d
+    );
+    const target = currentPos.clone();
+    target.y += 2; // Look slightly above ground
+
+    this.startTransition('isometric', position, target, 0.5);
+  }
+
+  /**
+   * Get the first person controller for external input handling
+   */
+  getFirstPersonController(): FirstPersonController {
+    return this.firstPersonController;
+  }
+
+  /**
+   * Check if in first person mode (or transitioning to it)
+   */
+  isFirstPerson(): boolean {
+    return this.mode === 'firstPerson' || this.transition.targetMode === 'firstPerson';
+  }
+
+  /**
    * Calculate optimal camera position for conversation framing
    * MMO-style: over-the-shoulder view with wizard in left foreground, minion in right background
    */
@@ -261,7 +339,7 @@ export class CameraController {
 
     const backOffset = wizardToMinion.clone().multiplyScalar(-4.0); // Further behind wizard
 
-    let idealPosition = wizardPosition.clone()
+    const idealPosition = wizardPosition.clone()
       .add(backOffset)
       .add(leftOffset);
     idealPosition.y = wizardPosition.y + this.config.conversationHeight + 0.8;
@@ -339,22 +417,48 @@ export class CameraController {
     if (!this.transition.switchedCamera && this.transition.progress >= 0.5) {
       this.transition.switchedCamera = true;
 
-      if (this.transition.targetMode === 'conversation') {
+      if (this.transition.targetMode === 'conversation' || this.transition.targetMode === 'firstPerson') {
         this.activeCamera = this.perspCamera;
       } else {
         this.activeCamera = this.orthoCamera;
       }
     }
 
-    // Apply position to active camera
-    this.activeCamera.position.copy(this.currentPosition);
-    this.activeCamera.lookAt(this.currentTarget);
+    // Apply position to active camera (skip for first person - it manages its own camera)
+    if (this.transition.targetMode !== 'firstPerson' || this.transition.active) {
+      this.activeCamera.position.copy(this.currentPosition);
+      this.activeCamera.lookAt(this.currentTarget);
+    }
 
     if (this.activeCamera === this.orthoCamera) {
       this.orthoCamera.updateProjectionMatrix();
     }
 
     return true;
+  }
+
+  /**
+   * Update first person mode each frame
+   * Call this separately from update() when in first person mode
+   */
+  updateFirstPerson(
+    deltaTime: number,
+    heightProvider?: { getHeightAt(x: number, z: number): number },
+    collisionMeshes?: THREE.Mesh[]
+  ): void {
+    if (this.mode !== 'firstPerson') return;
+
+    this.firstPersonController.update(deltaTime, heightProvider, collisionMeshes);
+
+    // Keep current position/target synced for smooth exit transitions
+    this.currentPosition.copy(this.firstPersonController.getPosition());
+    const { yaw, pitch } = this.firstPersonController.getRotation();
+    const lookDir = new THREE.Vector3(
+      Math.sin(yaw) * Math.cos(pitch),
+      Math.sin(pitch),
+      Math.cos(yaw) * Math.cos(pitch)
+    );
+    this.currentTarget.copy(this.currentPosition).add(lookDir.multiplyScalar(10));
   }
 
   /**
