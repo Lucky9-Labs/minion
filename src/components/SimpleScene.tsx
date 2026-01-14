@@ -22,6 +22,7 @@ import { useProjectStore } from '@/store/projectStore';
 import {
   createProjectBuilding,
   setProjectBuildingSelected,
+  updateBuildingsDetailLevel,
   type ProjectBuildingMesh,
 } from '@/lib/projectBuildings';
 import { FirstPersonHands } from '@/lib/FirstPersonHands';
@@ -1178,6 +1179,9 @@ export function SimpleScene({
         dayNightCycleRef.current.setShadowMapSize(256);
       }
 
+      // Enable high detail stone textures on buildings (only visible in first-person)
+      updateBuildingsDetailLevel(projectBuildingsRef.current, true);
+
       // Request pointer lock
       renderer.domElement.requestPointerLock();
     }
@@ -1225,6 +1229,9 @@ export function SimpleScene({
       if (dayNightCycleRef.current) {
         dayNightCycleRef.current.setShadowMapSize(512);
       }
+
+      // Disable high detail stone textures (not needed in isometric view)
+      updateBuildingsDetailLevel(projectBuildingsRef.current, false);
 
       // Update store camera mode
       useGameStore.getState().setCameraMode('isometric');

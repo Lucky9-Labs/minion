@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef, useMemo } from 'react';
+import { useRef } from 'react';
 import * as THREE from 'three';
 import type { BuildingStage } from '@/types/project';
 import { AnimatedDoor } from './AnimatedDoor';
+import { StoneWall, PitchedWoodRoof, CornerQuoin, STONE_COLORS, WOOD_COLORS } from './materials/StoneMaterial';
 
 interface CottageBuildingProps {
   stage: BuildingStage;
@@ -27,35 +28,6 @@ export function CottageBuilding({
   const floorHeight = 0.8;
   const totalHeight = baseHeight + Math.min(level - 1, 3) * floorHeight;
 
-  // Create pitched roof geometry - a triangular prism (gabled roof)
-  const roofGeometry = useMemo(() => {
-    const roofWidth = 2.2;
-    const roofDepth = 2.2;
-    const roofHeight = 1.0;
-
-    // Create roof shape - a simple triangle profile
-    const shape = new THREE.Shape();
-    shape.moveTo(-roofWidth / 2, 0);
-    shape.lineTo(0, roofHeight);
-    shape.lineTo(roofWidth / 2, 0);
-    shape.closePath();
-
-    const extrudeSettings = {
-      depth: roofDepth,
-      bevelEnabled: false,
-    };
-
-    const geo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
-    // Rotate to make it horizontal: ridge runs along Z axis (front-to-back)
-    geo.rotateX(-Math.PI / 2);
-    // Center the geometry
-    geo.translate(0, 0, -roofDepth / 2);
-    // Now rotate 90 degrees around Y to make ridge run along X axis (side-to-side)
-    geo.rotateY(Math.PI / 2);
-
-    return geo;
-  }, []);
-
   const stageOpacity = {
     planning: 0.3,
     foundation: 0.5,
@@ -68,49 +40,114 @@ export function CottageBuilding({
   const showScaffolding = stage === 'scaffolding';
   const showDecorations = stage === 'decorated';
   const showRoof = stage !== 'planning' && stage !== 'foundation';
+  const showStoneDetail = stage === 'constructed' || stage === 'decorated';
 
   return (
     <group ref={groupRef} position={position} onClick={onClick}>
-      {/* Foundation/Base */}
+      {/* Foundation/Base - gray stone */}
       <mesh position={[0, 0.1, 0]} castShadow receiveShadow>
         <boxGeometry args={[2, 0.2, 2]} />
-        <meshStandardMaterial color="#8B7355" transparent opacity={opacity} />
+        <meshStandardMaterial color={STONE_COLORS.darker} roughness={0.95} transparent opacity={opacity} />
       </mesh>
 
-      {/* Main walls */}
+      {/* Main walls - stone blocks when detailed, solid when building */}
       {stage !== 'planning' && (
-        <mesh position={[0, totalHeight / 2 + 0.2, 0]} castShadow receiveShadow>
-          <boxGeometry args={[1.8, totalHeight, 1.8]} />
-          <meshStandardMaterial
-            color="#E8DCC4"
-            transparent
-            opacity={stage === 'scaffolding' ? 0.6 : opacity}
-          />
-        </mesh>
+        <>
+          {showStoneDetail ? (
+            <>
+              {/* Front wall with stone blocks */}
+              <StoneWall
+                width={1.8}
+                height={totalHeight}
+                depth={0.15}
+                position={[0, totalHeight / 2 + 0.2, 0.83]}
+                blockRows={Math.max(3, Math.floor(totalHeight / 0.5))}
+                blockCols={4}
+                opacity={opacity}
+                seed={1}
+              />
+              {/* Back wall */}
+              <StoneWall
+                width={1.8}
+                height={totalHeight}
+                depth={0.15}
+                position={[0, totalHeight / 2 + 0.2, -0.83]}
+                blockRows={Math.max(3, Math.floor(totalHeight / 0.5))}
+                blockCols={4}
+                opacity={opacity}
+                seed={2}
+              />
+              {/* Left wall */}
+              <StoneWall
+                width={1.5}
+                height={totalHeight}
+                depth={0.15}
+                position={[-0.83, totalHeight / 2 + 0.2, 0]}
+                rotation={[0, Math.PI / 2, 0]}
+                blockRows={Math.max(3, Math.floor(totalHeight / 0.5))}
+                blockCols={3}
+                opacity={opacity}
+                seed={3}
+              />
+              {/* Right wall */}
+              <StoneWall
+                width={1.5}
+                height={totalHeight}
+                depth={0.15}
+                position={[0.83, totalHeight / 2 + 0.2, 0]}
+                rotation={[0, Math.PI / 2, 0]}
+                blockRows={Math.max(3, Math.floor(totalHeight / 0.5))}
+                blockCols={3}
+                opacity={opacity}
+                seed={4}
+              />
+              {/* Corner quoins */}
+              <CornerQuoin height={totalHeight} position={[-0.85, totalHeight / 2 + 0.2, 0.85]} opacity={opacity} />
+              <CornerQuoin height={totalHeight} position={[0.85, totalHeight / 2 + 0.2, 0.85]} opacity={opacity} />
+              <CornerQuoin height={totalHeight} position={[-0.85, totalHeight / 2 + 0.2, -0.85]} opacity={opacity} />
+              <CornerQuoin height={totalHeight} position={[0.85, totalHeight / 2 + 0.2, -0.85]} opacity={opacity} />
+            </>
+          ) : (
+            /* Simple solid walls during construction */
+            <mesh position={[0, totalHeight / 2 + 0.2, 0]} castShadow receiveShadow>
+              <boxGeometry args={[1.8, totalHeight, 1.8]} />
+              <meshStandardMaterial
+                color={STONE_COLORS.medium}
+                transparent
+                opacity={stage === 'scaffolding' ? 0.6 : opacity}
+                roughness={0.9}
+              />
+            </mesh>
+          )}
+        </>
       )}
 
-      {/* Roof - pitched/gabled style */}
+      {/* Roof - wood plank pitched style */}
       {showRoof && (
-        <mesh
+        <PitchedWoodRoof
+          width={2.2}
+          depth={2.2}
+          roofHeight={1.0}
           position={[0, totalHeight + 0.2, 0]}
-          geometry={roofGeometry}
-          castShadow
-        >
-          <meshStandardMaterial
-            color="#8B4513"
-            flatShading
-            transparent
-            opacity={stage === 'scaffolding' ? 0.5 : opacity}
-          />
-        </mesh>
+          opacity={stage === 'scaffolding' ? 0.5 : opacity}
+          seed={10}
+          woodTone="medium"
+        />
       )}
 
-      {/* Chimney */}
+      {/* Chimney - gray stone */}
       {showRoof && (
-        <mesh position={[0.5, totalHeight + 0.8, 0.5]} castShadow>
-          <boxGeometry args={[0.3, 0.8, 0.3]} />
-          <meshStandardMaterial color="#696969" transparent opacity={opacity} />
-        </mesh>
+        <group position={[0.5, totalHeight + 0.8, 0.5]}>
+          <mesh castShadow>
+            <boxGeometry args={[0.3, 0.8, 0.3]} />
+            <meshStandardMaterial color={STONE_COLORS.dark} roughness={0.9} transparent opacity={opacity} />
+          </mesh>
+          {/* Chimney cap */}
+          <mesh position={[0, 0.45, 0]} castShadow>
+            <boxGeometry args={[0.35, 0.1, 0.35]} />
+            <meshStandardMaterial color={STONE_COLORS.darker} roughness={0.9} transparent opacity={opacity} />
+          </mesh>
+        </group>
       )}
 
       {/* Door - animated when constructed, static otherwise */}
@@ -124,20 +161,29 @@ export function CottageBuilding({
       ) : stage !== 'planning' ? (
         <mesh position={[0, 0.5, 0.91]} castShadow>
           <boxGeometry args={[0.5, 0.8, 0.05]} />
-          <meshStandardMaterial color="#5D4037" transparent opacity={opacity} />
+          <meshStandardMaterial color={WOOD_COLORS.dark} transparent opacity={opacity} />
         </mesh>
       ) : null}
 
       {/* Windows */}
       {stage !== 'planning' && stage !== 'foundation' && (
         <>
+          {/* Window frames - dark wood */}
           <mesh position={[0.6, 1, 0.91]} castShadow>
-            <boxGeometry args={[0.3, 0.3, 0.05]} />
-            <meshStandardMaterial color="#87CEEB" transparent opacity={opacity} />
+            <boxGeometry args={[0.35, 0.35, 0.06]} />
+            <meshStandardMaterial color={WOOD_COLORS.darkStain} transparent opacity={opacity} />
+          </mesh>
+          <mesh position={[0.6, 1, 0.93]} castShadow>
+            <boxGeometry args={[0.25, 0.25, 0.02]} />
+            <meshStandardMaterial color="#87CEEB" transparent opacity={opacity * 0.8} />
           </mesh>
           <mesh position={[-0.6, 1, 0.91]} castShadow>
-            <boxGeometry args={[0.3, 0.3, 0.05]} />
-            <meshStandardMaterial color="#87CEEB" transparent opacity={opacity} />
+            <boxGeometry args={[0.35, 0.35, 0.06]} />
+            <meshStandardMaterial color={WOOD_COLORS.darkStain} transparent opacity={opacity} />
+          </mesh>
+          <mesh position={[-0.6, 1, 0.93]} castShadow>
+            <boxGeometry args={[0.25, 0.25, 0.02]} />
+            <meshStandardMaterial color="#87CEEB" transparent opacity={opacity * 0.8} />
           </mesh>
         </>
       )}
@@ -154,7 +200,7 @@ export function CottageBuilding({
           ].map((pos, i) => (
             <mesh key={i} position={[pos[0], totalHeight / 2 + 0.5, pos[2]]} castShadow>
               <cylinderGeometry args={[0.05, 0.05, totalHeight + 1]} />
-              <meshStandardMaterial color="#8B4513" />
+              <meshStandardMaterial color={WOOD_COLORS.medium} />
             </mesh>
           ))}
           {/* Horizontal beams */}
@@ -162,11 +208,11 @@ export function CottageBuilding({
             <group key={i}>
               <mesh position={[0, y, -1.2]} castShadow>
                 <boxGeometry args={[2.4, 0.08, 0.08]} />
-                <meshStandardMaterial color="#8B4513" />
+                <meshStandardMaterial color={WOOD_COLORS.medium} />
               </mesh>
               <mesh position={[0, y, 1.2]} castShadow>
                 <boxGeometry args={[2.4, 0.08, 0.08]} />
-                <meshStandardMaterial color="#8B4513" />
+                <meshStandardMaterial color={WOOD_COLORS.medium} />
               </mesh>
             </group>
           ))}
@@ -179,7 +225,7 @@ export function CottageBuilding({
           {/* Flower box under window */}
           <mesh position={[0.6, 0.7, 1]} castShadow>
             <boxGeometry args={[0.4, 0.15, 0.15]} />
-            <meshStandardMaterial color="#8B4513" />
+            <meshStandardMaterial color={WOOD_COLORS.weathered} />
           </mesh>
           {/* Flowers */}
           {[-0.1, 0, 0.1].map((x, i) => (
@@ -219,7 +265,7 @@ export function CottageBuilding({
           ].map(([x, z], i) => (
             <mesh key={i} position={[x, 0.2, z]} castShadow>
               <cylinderGeometry args={[0.03, 0.03, 0.4]} />
-              <meshStandardMaterial color="#8B4513" />
+              <meshStandardMaterial color={WOOD_COLORS.medium} />
             </mesh>
           ))}
           {/* String between stakes */}
