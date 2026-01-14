@@ -28,6 +28,10 @@ export class ForceGrabController {
   private wobblePhase: THREE.Vector3 = new THREE.Vector3();
   private wobbleFrequency: THREE.Vector3 = new THREE.Vector3();
 
+  // Isometric mode support
+  private isIsometricMode: boolean = false;
+  private wizardPositionGetter: (() => THREE.Vector3) | null = null;
+
   constructor(config?: Partial<SpringConfig>) {
     this.config = { ...DEFAULT_SPRING_CONFIG, ...config };
     this.targetPosition = new THREE.Vector3();
@@ -97,6 +101,35 @@ export class ForceGrabController {
   }
 
   /**
+   * Enable/disable isometric mode
+   */
+  setIsometricMode(isometric: boolean): void {
+    this.isIsometricMode = isometric;
+  }
+
+  /**
+   * Set wizard position getter for isometric mode
+   */
+  setWizardPositionGetter(getter: () => THREE.Vector3): void {
+    this.wizardPositionGetter = getter;
+  }
+
+  /**
+   * Update target position for isometric mode (toward wizard)
+   */
+  updateTargetForIsometric(): void {
+    if (!this.isActive || !this.isIsometricMode || !this.wizardPositionGetter) return;
+
+    const wizardPos = this.wizardPositionGetter();
+    // Position the grabbed entity in front of and above the wizard
+    this.targetPosition.set(
+      wizardPos.x,
+      wizardPos.y + 2.5, // Float above wizard's head
+      wizardPos.z
+    );
+  }
+
+  /**
    * Release with optional throw velocity
    */
   release(throwVelocity?: THREE.Vector3): THREE.Vector3 {
@@ -115,20 +148,35 @@ export class ForceGrabController {
   }
 
   /**
-   * Throw the grabbed entity in the camera's look direction with ruthless force
+   * Throw the grabbed entity in the camera's look direction or toward a target position
    * Returns the throw velocity for physics simulation
+   * @param targetPosition Optional world position to throw toward (for isometric mode)
    */
-  throw(): { entityId: string; velocity: THREE.Vector3; position: THREE.Vector3 } | null {
-    if (!this.grabbedMesh || !this.isActive || !this.camera) {
+  throw(targetPosition?: THREE.Vector3): { entityId: string; velocity: THREE.Vector3; position: THREE.Vector3 } | null {
+    if (!this.grabbedMesh || !this.isActive) {
       return null;
     }
 
-    // Calculate throw direction from camera
-    const throwDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+    let throwDirection: THREE.Vector3;
 
-    // Add slight upward arc for dramatic effect
-    throwDirection.y += 0.15;
-    throwDirection.normalize();
+    if (targetPosition) {
+      // Isometric mode: throw toward target position
+      throwDirection = targetPosition.clone().sub(this.grabbedMesh.position).normalize();
+      // Add upward arc based on distance for parabolic trajectory
+      const distance = this.grabbedMesh.position.distanceTo(targetPosition);
+      const arcHeight = Math.min(0.5, distance * 0.08);
+      throwDirection.y += arcHeight;
+      throwDirection.normalize();
+    } else if (this.camera) {
+      // First person mode: throw in camera direction
+      throwDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+      // Add slight upward arc for dramatic effect
+      throwDirection.y += 0.15;
+      throwDirection.normalize();
+    } else {
+      // Fallback direction
+      throwDirection = new THREE.Vector3(0, 0.15, -1).normalize();
+    }
 
     // High velocity throw
     const throwVelocity = throwDirection.multiplyScalar(this.throwForce);

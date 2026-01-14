@@ -13,6 +13,8 @@ interface InteractionHUDProps {
   /** Accumulated mouse delta for look-to-select */
   selectionDelta: { x: number; y: number };
   showQuickInfo: boolean;
+  /** Screen position for radial menu (null = screen center) */
+  menuScreenPosition?: { x: number; y: number } | null;
   onMenuSelect: (option: MenuOption) => void;
   onMenuCancel: () => void;
 }
@@ -24,6 +26,7 @@ export function InteractionHUD({
   menuOptions,
   selectionDelta,
   showQuickInfo,
+  menuScreenPosition,
   onMenuSelect,
   onMenuCancel,
 }: InteractionHUDProps) {
@@ -41,6 +44,7 @@ export function InteractionHUD({
         onSelect={onMenuSelect}
         onCancel={onMenuCancel}
         selectionDelta={selectionDelta}
+        screenPosition={menuScreenPosition}
       />
 
       {/* Drawing mode indicator */}
