@@ -340,6 +340,20 @@ export class DayNightCycle {
   }
 
   /**
+   * Set shadow map resolution dynamically (for performance optimization)
+   * Lower values = better performance, more pixelated shadows
+   */
+  setShadowMapSize(size: number): void {
+    this.sunLight.shadow.mapSize.width = size;
+    this.sunLight.shadow.mapSize.height = size;
+    // Force shadow map regeneration
+    if (this.sunLight.shadow.map) {
+      this.sunLight.shadow.map.dispose();
+      this.sunLight.shadow.map = null;
+    }
+  }
+
+  /**
    * Dispose of resources
    */
   dispose(): void {
