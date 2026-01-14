@@ -17,6 +17,12 @@ export class ForceGrabController {
   // Grab distance from camera
   private grabDistance: number = 3;
 
+  // Throw configuration
+  private throwForce: number = 80; // MAXIMUM RUTHLESS velocity for throws
+
+  // Camera reference for throw direction
+  private camera: THREE.PerspectiveCamera | null = null;
+
   // For visual rotation during grab (ragdoll wobble)
   private rotationVelocity: THREE.Vector3 = new THREE.Vector3();
   private wobblePhase: THREE.Vector3 = new THREE.Vector3();
@@ -84,6 +90,13 @@ export class ForceGrabController {
   }
 
   /**
+   * Set camera reference for throw direction calculation
+   */
+  setCamera(camera: THREE.PerspectiveCamera): void {
+    this.camera = camera;
+  }
+
+  /**
    * Release with optional throw velocity
    */
   release(throwVelocity?: THREE.Vector3): THREE.Vector3 {
@@ -91,7 +104,6 @@ export class ForceGrabController {
       return new THREE.Vector3();
     }
 
-    const releasePosition = this.grabbedMesh.position.clone();
     const releaseVelocity = throwVelocity || this.currentVelocity.clone();
 
     this.isActive = false;
@@ -100,6 +112,38 @@ export class ForceGrabController {
     this.currentVelocity.set(0, 0, 0);
 
     return releaseVelocity;
+  }
+
+  /**
+   * Throw the grabbed entity in the camera's look direction with ruthless force
+   * Returns the throw velocity for physics simulation
+   */
+  throw(): { entityId: string; velocity: THREE.Vector3; position: THREE.Vector3 } | null {
+    if (!this.grabbedMesh || !this.isActive || !this.camera) {
+      return null;
+    }
+
+    // Calculate throw direction from camera
+    const throwDirection = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
+
+    // Add slight upward arc for dramatic effect
+    throwDirection.y += 0.15;
+    throwDirection.normalize();
+
+    // High velocity throw
+    const throwVelocity = throwDirection.multiplyScalar(this.throwForce);
+
+    // Get final position and entity ID
+    const entityId = this.grabbedEntityId!;
+    const position = this.grabbedMesh.position.clone();
+
+    // Reset state
+    this.isActive = false;
+    this.grabbedMesh = null;
+    this.grabbedEntityId = null;
+    this.currentVelocity.set(0, 0, 0);
+
+    return { entityId, velocity: throwVelocity, position };
   }
 
   /**
@@ -198,6 +242,10 @@ export class ForceGrabController {
 
   setGrabDistance(distance: number): void {
     this.grabDistance = distance;
+  }
+
+  setThrowForce(force: number): void {
+    this.throwForce = force;
   }
 
   dispose(): void {

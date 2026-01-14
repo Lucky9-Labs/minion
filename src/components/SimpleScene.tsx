@@ -26,6 +26,7 @@ import {
 } from '@/lib/projectBuildings';
 import { FirstPersonHands } from '@/lib/FirstPersonHands';
 import { StaffInteractionController } from '@/lib/interaction';
+import type { ThrownEntity } from '@/lib/interaction/StaffInteractionController';
 import type { InteractionMode, MenuOption, DrawnFoundation } from '@/types/interaction';
 
 // Minion data for tracking position and movement
@@ -70,6 +71,14 @@ interface BuildingBounds {
   minZ: number;
   maxZ: number;
   floorY: number;
+}
+
+// Thrown minion physics state
+interface ThrownMinionState {
+  minionId: string;
+  velocity: THREE.Vector3;
+  angularVelocity: THREE.Vector3; // For spinning during flight
+  bounceCount: number;
 }
 
 // Camera bounds from continuous terrain
@@ -135,6 +144,7 @@ export function SimpleScene({
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
   const isFirstPersonRef = useRef<boolean>(false);
   const lastDeltaUpdateRef = useRef<number>(0);
+  const thrownMinionsRef = useRef<Map<string, ThrownMinionState>>(new Map());
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -863,6 +873,29 @@ export function SimpleScene({
           firstPersonHandsRef.current.setStaffState(state);
         }
       },
+      onEntityThrown: (thrown) => {
+        // Start tracking this minion's thrown physics
+        const minionData = minionsRef.current.get(thrown.entityId);
+        if (minionData) {
+          // Set initial position from throw
+          minionData.currentPosition.copy(thrown.position);
+          minionData.instance.mesh.position.copy(thrown.position);
+
+          // Random angular velocity for dramatic spinning
+          const angularVelocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 15,
+            (Math.random() - 0.5) * 20,
+            (Math.random() - 0.5) * 15
+          );
+
+          thrownMinionsRef.current.set(thrown.entityId, {
+            minionId: thrown.entityId,
+            velocity: thrown.velocity.clone(),
+            angularVelocity,
+            bounceCount: 0,
+          });
+        }
+      },
     });
 
     // Expose execute action callback to parent
@@ -1327,16 +1360,110 @@ export function SimpleScene({
       const conversationState = useGameStore.getState().conversation;
       const inConversation = conversationState.active;
 
+      // Update thrown minions physics (only if there are any)
+      if (thrownMinionsRef.current.size > 0) {
+        const GRAVITY = 35;
+        const BOUNCE_DAMPING = 0.55;
+        const MIN_BOUNCE_VELOCITY = 2;
+        const MAX_BOUNCES = 4;
+        const worldLimit = WORLD_HALF_SIZE * 0.95;
+
+        thrownMinionsRef.current.forEach((thrown, minionId) => {
+          const minionData = minionsRef.current.get(minionId);
+          if (!minionData) {
+            thrownMinionsRef.current.delete(minionId);
+            return;
+          }
+
+          // Apply gravity and update position inline (no cloning)
+          thrown.velocity.y -= GRAVITY * deltaTime;
+          minionData.currentPosition.x += thrown.velocity.x * deltaTime;
+          minionData.currentPosition.y += thrown.velocity.y * deltaTime;
+          minionData.currentPosition.z += thrown.velocity.z * deltaTime;
+
+          // Get ground height
+          const groundY = getGroundHeight(minionData.currentPosition.x, minionData.currentPosition.z);
+
+          // Bounce on ground collision
+          if (minionData.currentPosition.y <= groundY && thrown.velocity.y < 0) {
+            thrown.bounceCount++;
+            minionData.currentPosition.y = groundY;
+            thrown.velocity.y = -thrown.velocity.y * BOUNCE_DAMPING;
+            thrown.velocity.x = thrown.velocity.x * 0.7 + (Math.random() - 0.5) * 3;
+            thrown.velocity.z = thrown.velocity.z * 0.7 + (Math.random() - 0.5) * 3;
+            thrown.angularVelocity.x += (Math.random() - 0.5) * 10;
+            thrown.angularVelocity.z += (Math.random() - 0.5) * 10;
+
+            if (Math.abs(thrown.velocity.y) < MIN_BOUNCE_VELOCITY || thrown.bounceCount >= MAX_BOUNCES) {
+              minionData.currentPosition.y = groundY;
+              minionData.instance.mesh.position.copy(minionData.currentPosition);
+              minionData.instance.mesh.rotation.set(0, minionData.instance.mesh.rotation.y, 0);
+              minionData.isMoving = false;
+              minionData.idleTimer = 2 + Math.random() * 2;
+              thrownMinionsRef.current.delete(minionId);
+              return;
+            }
+          }
+
+          // World bounds
+          if (Math.abs(minionData.currentPosition.x) > worldLimit) {
+            minionData.currentPosition.x = Math.sign(minionData.currentPosition.x) * worldLimit;
+            thrown.velocity.x *= -0.5;
+          }
+          if (Math.abs(minionData.currentPosition.z) > worldLimit) {
+            minionData.currentPosition.z = Math.sign(minionData.currentPosition.z) * worldLimit;
+            thrown.velocity.z *= -0.5;
+          }
+
+          // Update mesh
+          minionData.instance.mesh.position.copy(minionData.currentPosition);
+          minionData.instance.mesh.rotation.x += thrown.angularVelocity.x * deltaTime;
+          minionData.instance.mesh.rotation.y += thrown.angularVelocity.y * deltaTime;
+          minionData.instance.mesh.rotation.z += thrown.angularVelocity.z * deltaTime;
+          thrown.angularVelocity.multiplyScalar(0.98);
+        });
+      }
+
       // Animate minions
       const grabbedMinionId = interactionControllerRef.current?.getGrabbedEntityId();
       const suspendedMinionId = interactionControllerRef.current?.getSuspendedEntityId();
+      const hasThrownMinions = thrownMinionsRef.current.size > 0;
       minionsRef.current.forEach((data) => {
+        // Skip if being thrown (physics handled above) - only check if there are thrown minions
+        const isThrown = hasThrownMinions && thrownMinionsRef.current.has(data.minionId);
+
         // Check if this minion is being force grabbed or suspended (menu open)
         const isGrabbed = grabbedMinionId === data.minionId;
         const isSuspended = suspendedMinionId === data.minionId;
 
         // Check if this minion is in conversation
         const isConversing = inConversation && conversationState.minionId === data.minionId;
+
+        // Skip normal updates if thrown (physics handled separately)
+        if (isThrown) {
+          // Just update animator for flailing effect
+          data.instance.animator.update(deltaTime, elapsedTime, false);
+
+          // Chaotic limb flailing during flight
+          const refs = data.instance.refs;
+          const flailSpeed = 15;
+          const flailAmount = 1.2;
+          if (refs.leftHand) {
+            refs.leftHand.rotation.x = Math.sin(elapsedTime * flailSpeed) * flailAmount;
+            refs.leftHand.rotation.z = Math.cos(elapsedTime * flailSpeed * 0.7) * flailAmount;
+          }
+          if (refs.rightHand) {
+            refs.rightHand.rotation.x = Math.sin(elapsedTime * flailSpeed + Math.PI) * flailAmount;
+            refs.rightHand.rotation.z = Math.cos(elapsedTime * flailSpeed * 0.7 + Math.PI) * flailAmount;
+          }
+          if (refs.leftLeg) {
+            refs.leftLeg.rotation.x = Math.sin(elapsedTime * flailSpeed * 0.9) * flailAmount;
+          }
+          if (refs.rightLeg) {
+            refs.rightLeg.rotation.x = Math.sin(elapsedTime * flailSpeed * 0.9 + Math.PI) * flailAmount;
+          }
+          return; // Skip rest of normal minion logic
+        }
 
         // Update animator (not moving if conversing, grabbed, or suspended)
         data.instance.animator.update(deltaTime, elapsedTime, data.isMoving && !isConversing && !isGrabbed && !isSuspended);

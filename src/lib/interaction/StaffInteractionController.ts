@@ -17,6 +17,12 @@ import {
   GROUND_MENU_OPTIONS,
 } from '@/types/interaction';
 
+export interface ThrownEntity {
+  entityId: string;
+  velocity: THREE.Vector3;
+  position: THREE.Vector3;
+}
+
 interface StaffInteractionCallbacks {
   onMinionChat?: (minionId: string) => void;
   onMinionQuest?: (minionId: string) => void;
@@ -26,6 +32,7 @@ interface StaffInteractionCallbacks {
   onFoundationComplete?: (foundation: DrawnFoundation) => void;
   onModeChange?: (mode: InteractionMode) => void;
   onStaffStateChange?: (state: StaffState) => void;
+  onEntityThrown?: (thrown: ThrownEntity) => void;
 }
 
 export class StaffInteractionController {
@@ -71,6 +78,7 @@ export class StaffInteractionController {
 
     this.targetingSystem = new TargetingSystem(camera);
     this.forceGrabController = new ForceGrabController();
+    this.forceGrabController.setCamera(camera);
     this.foundationDrawer = new FoundationDrawer();
     this.staffBeam = new StaffBeam();
 
@@ -85,6 +93,7 @@ export class StaffInteractionController {
   setCamera(camera: THREE.PerspectiveCamera): void {
     this.camera = camera;
     this.targetingSystem.setCamera(camera);
+    this.forceGrabController.setCamera(camera);
   }
 
   setHeightFunction(fn: (x: number, z: number) => number): void {
@@ -119,9 +128,11 @@ export class StaffInteractionController {
     this.hideQuickInfo();
 
     if (this.state.mode === 'grabbing') {
-      // Release grabbed entity
-      const velocity = this.forceGrabController.getVelocity();
-      this.forceGrabController.release(velocity);
+      // Throw the grabbed entity with ruthless force
+      const thrown = this.forceGrabController.throw();
+      if (thrown) {
+        this.callbacks.onEntityThrown?.(thrown);
+      }
       this.setMode('idle');
       return;
     }
