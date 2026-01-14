@@ -114,6 +114,7 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
   const isFirstPersonRef = useRef<boolean>(false);
   const ratSystemRef = useRef<RatSystem | null>(null);
+  const animationFrameIdRef = useRef<number>(0);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -980,7 +981,7 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     // Animation loop
     let lastTime = 0;
     function animate(time: number) {
-      requestAnimationFrame(animate);
+      animationFrameIdRef.current = requestAnimationFrame(animate);
       const deltaTime = Math.min((time - lastTime) / 1000, 0.1);
       lastTime = time;
       const elapsedTime = time / 1000;
@@ -1381,6 +1382,7 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     window.addEventListener('resize', handleResize);
 
     return () => {
+      cancelAnimationFrame(animationFrameIdRef.current);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
