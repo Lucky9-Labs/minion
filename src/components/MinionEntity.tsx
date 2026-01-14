@@ -7,6 +7,8 @@ import * as THREE from 'three';
 import type { Minion } from '@/types/game';
 import { MINION_ROLES } from '@/types/game';
 import { useGameStore } from '@/store/gameStore';
+import { useAnimation, ANIMATION_PRIORITY } from '@/lib/animationManager';
+import { lodManager, LODVisibility } from '@/lib/lodSystem';
 
 interface MinionEntityProps {
   minion: Minion;
@@ -58,17 +60,25 @@ export function MinionEntity({ minion }: MinionEntityProps) {
   const mouthRef = useRef<THREE.Mesh>(null);
 
   const [hovered, setHovered] = useState(false);
-  const [isBlinking, setIsBlinking] = useState(false);
-  const [expression, setExpression] = useState<Expression>('neutral');
 
-  // Use refs for timing to avoid calling Math.random during render
+  // Use refs for animation state to avoid React re-renders during animation
+  const isBlinkingRef = useRef(false);
+  const expressionRef = useRef<Expression>('neutral');
   const blinkTimerRef = useRef(0);
   const nextBlinkTimeRef = useRef(4);
+  const blinkEndTimeRef = useRef(0);
+
+  // Refs for conditional mesh visibility (teeth)
+  const leftToothRef = useRef<THREE.Mesh>(null);
+  const rightToothRef = useRef<THREE.Mesh>(null);
 
   // Initialize random value in effect to avoid impure render
   useEffect(() => {
     nextBlinkTimeRef.current = 3 + Math.random() * 2;
   }, []);
+
+  // Track expression for conditional rendering (only re-render when expression actually changes)
+  const [expressionForRender, setExpressionForRender] = useState<Expression>('neutral');
 
   const selectedMinionId = useGameStore((state) => state.selectedMinionId);
   const setSelectedMinion = useGameStore((state) => state.setSelectedMinion);
@@ -213,32 +223,59 @@ export function MinionEntity({ minion }: MinionEntityProps) {
     }
   }, [minion.position.y]);
 
-  // Animation based on state
+  // Animation based on state - using centralized animation manager
   useFrame((state, delta) => {
     if (!groupRef.current) return;
 
     const time = state.clock.elapsedTime;
 
-    // Blink logic
+    // Get LOD level for this minion
+    const minionPos = groupRef.current.position;
+    const lodLevel = lodManager.getLODLevel(minion.id, minionPos);
+
+    // Skip all animation if culled
+    if (!LODVisibility.shouldRender(lodLevel)) {
+      return;
+    }
+
+    // Blink logic - no setTimeout, use timer
     blinkTimerRef.current += delta;
-    if (blinkTimerRef.current > nextBlinkTimeRef.current && !isBlinking) {
-      setIsBlinking(true);
-      setTimeout(() => setIsBlinking(false), 150);
+    if (blinkTimerRef.current > nextBlinkTimeRef.current && !isBlinkingRef.current) {
+      isBlinkingRef.current = true;
+      blinkEndTimeRef.current = time + 0.15; // Blink duration
       blinkTimerRef.current = 0;
       nextBlinkTimeRef.current = 3 + Math.random() * 2;
     }
+    // End blink when time is up
+    if (isBlinkingRef.current && time > blinkEndTimeRef.current) {
+      isBlinkingRef.current = false;
+    }
 
-    // Animate eyelids for blinking
-    if (leftEyelidRef.current && rightEyelidRef.current) {
-      const blinkScale = isBlinking ? 1 : 0.1;
+    // Animate eyelids for blinking (only at high LOD)
+    if (LODVisibility.showDetailAnimations(lodLevel) && leftEyelidRef.current && rightEyelidRef.current) {
+      const blinkScale = isBlinkingRef.current ? 1 : 0.1;
       leftEyelidRef.current.scale.y = THREE.MathUtils.lerp(leftEyelidRef.current.scale.y, blinkScale, 0.3);
       rightEyelidRef.current.scale.y = THREE.MathUtils.lerp(rightEyelidRef.current.scale.y, blinkScale, 0.3);
     }
 
-    // Update expression based on state
+    // Update expression based on state (using ref to avoid re-renders)
     const targetExpression = getExpressionForState(minion.state);
-    if (targetExpression !== expression) {
-      setExpression(targetExpression);
+    if (targetExpression !== expressionRef.current) {
+      expressionRef.current = targetExpression;
+      // Only trigger React re-render if expression visually changes (for teeth)
+      if (targetExpression !== expressionForRender) {
+        setExpressionForRender(targetExpression);
+      }
+      // Update mouth directly via ref
+      if (mouthRef.current) {
+        const shape = getMouthShapeForExpression(targetExpression);
+        mouthRef.current.position.y = shape.posY;
+        mouthRef.current.rotation.z = shape.rotation;
+        mouthRef.current.scale.set(shape.scaleX, shape.scaleY, 1);
+      }
+      // Update teeth visibility directly
+      if (leftToothRef.current) leftToothRef.current.visible = targetExpression === 'mischievous';
+      if (rightToothRef.current) rightToothRef.current.visible = targetExpression === 'mischievous';
     }
 
     // Base body animation
@@ -260,15 +297,15 @@ export function MinionEntity({ minion }: MinionEntityProps) {
         break;
     }
 
-    // Animate ears (slight wiggle always)
-    if (leftEarRef.current && rightEarRef.current) {
+    // Animate ears (slight wiggle) - only at high LOD
+    if (LODVisibility.showDetailAnimations(lodLevel) && leftEarRef.current && rightEarRef.current) {
       const earWiggle = Math.sin(time * 2) * 0.05;
       leftEarRef.current.rotation.z = 0.3 + earWiggle;
       rightEarRef.current.rotation.z = -0.3 - earWiggle;
     }
 
-    // Animate eyes looking around
-    if (leftEyeRef.current && rightEyeRef.current) {
+    // Animate eyes looking around - only at high LOD
+    if (LODVisibility.showDetailAnimations(lodLevel) && leftEyeRef.current && rightEyeRef.current) {
       const lookX = Math.sin(time * 0.5) * 0.02;
       const lookY = Math.cos(time * 0.7) * 0.01;
       leftEyeRef.current.position.x = 0.08 + lookX;
@@ -278,14 +315,9 @@ export function MinionEntity({ minion }: MinionEntityProps) {
     }
   });
 
-  const handleClick = (e: ThreeEvent<MouseEvent>) => {
-    e.stopPropagation();
-    setSelectedMinion(isSelected ? null : minion.id);
-  };
-
-  // Get mouth shape based on expression
-  const mouthShape = useMemo(() => {
-    switch (expression) {
+  // Helper function for mouth shape (moved outside useMemo for ref-based updates)
+  function getMouthShapeForExpression(expr: Expression) {
+    switch (expr) {
       case 'happy':
         return { scaleX: 1.2, scaleY: 0.8, posY: -0.08, rotation: 0 };
       case 'mischievous':
@@ -295,7 +327,17 @@ export function MinionEntity({ minion }: MinionEntityProps) {
       default:
         return { scaleX: 1, scaleY: 0.5, posY: -0.08, rotation: 0 };
     }
-  }, [expression]);
+  }
+
+  const handleClick = (e: ThreeEvent<MouseEvent>) => {
+    e.stopPropagation();
+    setSelectedMinion(isSelected ? null : minion.id);
+  };
+
+  // Get initial mouth shape (updated via ref during animation)
+  const initialMouthShape = useMemo(() => {
+    return getMouthShapeForExpression(expressionRef.current);
+  }, []);
 
   return (
     <group
@@ -506,40 +548,36 @@ export function MinionEntity({ minion }: MinionEntityProps) {
           </mesh>
         </group>
 
-        {/* Eyebrows (mischievous angle) */}
-        <mesh position={[0.08, 0.12, 0.17]} rotation={[0, 0, expression === 'mischievous' ? -0.3 : expression === 'worried' ? 0.3 : -0.1]}>
+        {/* Eyebrows (mischievous angle) - use expressionForRender to minimize re-renders */}
+        <mesh position={[0.08, 0.12, 0.17]} rotation={[0, 0, expressionForRender === 'mischievous' ? -0.3 : expressionForRender === 'worried' ? 0.3 : -0.1]}>
           <boxGeometry args={[0.06, 0.015, 0.01]} />
           <meshStandardMaterial color={GOBLIN_COLORS.skinDark} roughness={0.8} />
         </mesh>
-        <mesh position={[-0.08, 0.12, 0.17]} rotation={[0, 0, expression === 'mischievous' ? 0.3 : expression === 'worried' ? -0.3 : 0.1]}>
+        <mesh position={[-0.08, 0.12, 0.17]} rotation={[0, 0, expressionForRender === 'mischievous' ? 0.3 : expressionForRender === 'worried' ? -0.3 : 0.1]}>
           <boxGeometry args={[0.06, 0.015, 0.01]} />
           <meshStandardMaterial color={GOBLIN_COLORS.skinDark} roughness={0.8} />
         </mesh>
 
-        {/* === MOUTH === */}
+        {/* === MOUTH === (position/scale updated via ref in animation loop) */}
         <mesh
           ref={mouthRef}
-          position={[0, mouthShape.posY, 0.18]}
-          rotation={[0, 0, mouthShape.rotation]}
-          scale={[mouthShape.scaleX, mouthShape.scaleY, 1]}
+          position={[0, initialMouthShape.posY, 0.18]}
+          rotation={[0, 0, initialMouthShape.rotation]}
+          scale={[initialMouthShape.scaleX, initialMouthShape.scaleY, 1]}
         >
           <planeGeometry args={[0.08, 0.03]} />
           <meshBasicMaterial color={GOBLIN_COLORS.mouth} side={THREE.DoubleSide} />
         </mesh>
 
-        {/* Teeth (showing for mischievous grin) */}
-        {expression === 'mischievous' && (
-          <>
-            <mesh position={[0.02, -0.06, 0.19]}>
-              <boxGeometry args={[0.015, 0.02, 0.01]} />
-              <meshStandardMaterial color="#f0f0e0" roughness={0.3} />
-            </mesh>
-            <mesh position={[-0.02, -0.06, 0.19]}>
-              <boxGeometry args={[0.015, 0.02, 0.01]} />
-              <meshStandardMaterial color="#f0f0e0" roughness={0.3} />
-            </mesh>
-          </>
-        )}
+        {/* Teeth (visibility controlled via ref in animation loop) */}
+        <mesh ref={leftToothRef} position={[0.02, -0.06, 0.19]} visible={expressionForRender === 'mischievous'}>
+          <boxGeometry args={[0.015, 0.02, 0.01]} />
+          <meshStandardMaterial color="#f0f0e0" roughness={0.3} />
+        </mesh>
+        <mesh ref={rightToothRef} position={[-0.02, -0.06, 0.19]} visible={expressionForRender === 'mischievous'}>
+          <boxGeometry args={[0.015, 0.02, 0.01]} />
+          <meshStandardMaterial color="#f0f0e0" roughness={0.3} />
+        </mesh>
       </group>
 
       {/* Role-specific accessory */}
