@@ -7,10 +7,9 @@ import { useGameStore, useHasHydrated } from '@/store/gameStore';
 import { createMinion, knightHelmetConfig, getRegisteredSpecies } from '@/lib/minion';
 import type { MinionInstance } from '@/lib/minion';
 import { CameraRelativeWallCuller } from '@/lib/tower';
-import { ContinuousTerrainBuilder, DEFAULT_CONTINUOUS_CONFIG, PortalGateway } from '@/lib/terrain';
+import { ContinuousTerrainBuilder, DEFAULT_CONTINUOUS_CONFIG } from '@/lib/terrain';
 import type { ExclusionZone } from '@/lib/terrain';
 import { createVillagePaths } from '@/lib/terrain/VillagePaths';
-import { RatSystem } from '@/lib/terrain/RatSystem';
 import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
 import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
@@ -26,6 +25,9 @@ import {
   type ProjectBuildingMesh,
 } from '@/lib/projectBuildings';
 import { FirstPersonHands } from '@/lib/FirstPersonHands';
+import { StaffInteractionController } from '@/lib/interaction';
+import type { ThrownEntity } from '@/lib/interaction/StaffInteractionController';
+import type { InteractionMode, MenuOption, DrawnFoundation } from '@/types/interaction';
 
 // Minion data for tracking position and movement
 interface MinionSceneData {
@@ -71,6 +73,14 @@ interface BuildingBounds {
   floorY: number;
 }
 
+// Thrown minion physics state
+interface ThrownMinionState {
+  minionId: string;
+  velocity: THREE.Vector3;
+  angularVelocity: THREE.Vector3; // For spinning during flight
+  bounceCount: number;
+}
+
 // Camera bounds from continuous terrain
 const WORLD_HALF_SIZE = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2;
 
@@ -81,9 +91,28 @@ interface SimpleSceneProps {
   onMinionClick?: (minionId: string) => void;
   onProjectClick?: (projectId: string) => void;
   selectedProjectId?: string | null;
+  // Interaction callbacks
+  onInteractionModeChange?: (mode: InteractionMode) => void;
+  onMenuOptionsChange?: (options: MenuOption[] | null) => void;
+  onQuickInfoChange?: (show: boolean) => void;
+  onFoundationComplete?: (foundation: DrawnFoundation) => void;
+  onSelectionDeltaChange?: (delta: { x: number; y: number }) => void;
+  onTargetChange?: (target: import('@/types/interaction').Target | null) => void;
+  onInteractionControllerReady?: (executeAction: (actionId: string) => void) => void;
 }
 
-export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }: SimpleSceneProps) {
+export function SimpleScene({
+  onMinionClick,
+  onProjectClick,
+  selectedProjectId,
+  onInteractionModeChange,
+  onMenuOptionsChange,
+  onQuickInfoChange,
+  onFoundationComplete,
+  onSelectionDeltaChange,
+  onTargetChange,
+  onInteractionControllerReady,
+}: SimpleSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -111,11 +140,11 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
   const skyEnvironmentRef = useRef<SkyEnvironment | null>(null);
   const islandEdgeRef = useRef<THREE.Group | null>(null);
   const waterfallRef = useRef<Waterfall | null>(null);
+  const interactionControllerRef = useRef<StaffInteractionController | null>(null);
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
   const isFirstPersonRef = useRef<boolean>(false);
-  const portalGatewayRef = useRef<PortalGateway | null>(null);
-  const ratSystemRef = useRef<RatSystem | null>(null);
-  const animationFrameIdRef = useRef<number>(0);
+  const lastDeltaUpdateRef = useRef<number>(0);
+  const thrownMinionsRef = useRef<Map<string, ThrownMinionState>>(new Map());
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -504,17 +533,6 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     scene.add(waterfall.getGroup());
     waterfallRef.current = waterfall;
 
-    // === PORTAL GATEWAY (at true south edge of map) ===
-    const portalZ = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2 * 0.85; // True south
-    const portalY = terrainBuilder.getHeightAt(0, portalZ);
-    const portalGateway = new PortalGateway();
-    const portalMesh = portalGateway.getMesh();
-    portalMesh.position.set(0, portalY, portalZ);
-    // Face north (toward the cottage)
-    portalMesh.rotation.y = Math.PI;
-    scene.add(portalMesh);
-    portalGatewayRef.current = portalGateway;
-
     // Position building on terrain (at center, which is flat)
     const buildingY = terrainBuilder.getHeightAt(0, 0);
     buildingRefs.root.position.y = buildingY;
@@ -718,19 +736,6 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     }
     wildlifeRef.current = wildlife;
 
-    // === RATS (on cobblestone areas near building) ===
-    const ratSystem = new RatSystem();
-    // Spawn rats around the main building area (center of map)
-    ratSystem.spawnRats({
-      center: new THREE.Vector3(0, buildingY, 0),
-      radius: 12,
-      count: 6,
-      groundY: buildingY + 0.02,
-      seed: 42,
-    });
-    scene.add(ratSystem.getGroup());
-    ratSystemRef.current = ratSystem;
-
     // === MAGIC ORB (floating above building entrance) ===
     // Small glowing orb as a beacon/waypoint
     const orbGeometry = new THREE.IcosahedronGeometry(0.5, 1);
@@ -748,21 +753,17 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     scene.add(orb);
 
     // === PERMANENT WIZARD (always present, the player's avatar) ===
-    // Spawn at the portal gateway (true south), facing north toward cottage
-    const spawnZ = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2 * 0.75; // Just in front of portal
-    const spawnY = terrainBuilder.getHeightAt(0, spawnZ);
     const wizardInstance = createMinion({ species: 'wizard' });
-    wizardInstance.mesh.position.set(0, spawnY + 0.5, spawnZ);
-    wizardInstance.mesh.rotation.y = Math.PI; // Face north (toward cottage)
+    wizardInstance.mesh.position.set(5, buildingY + 0.5, 8); // In open area outside building
     wizardInstance.mesh.userData.isWizard = true;
     wizardInstance.mesh.castShadow = true;
     scene.add(wizardInstance.mesh);
     wizardRef.current = wizardInstance;
 
-    // Wizard wandering behavior - home is near the cottage, not the portal
+    // Wizard wandering behavior
     const wizardBehavior = new WizardBehavior({
       wanderRadius: 10,
-      homePosition: new THREE.Vector3(0, buildingY + 0.5, 2), // Near cottage entrance
+      homePosition: new THREE.Vector3(5, buildingY + 0.5, 8),
       idleDurationMin: 2,
       idleDurationMax: 5,
       wanderSpeed: 1.2,
@@ -823,6 +824,85 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     scene.add(magicCircle.getMesh());
     magicCircleRef.current = magicCircle;
 
+    // === STAFF INTERACTION CONTROLLER (for first person force grab) ===
+    const interactionController = new StaffInteractionController(perspCamera, scene);
+    interactionControllerRef.current = interactionController;
+
+    // Set up ground mesh for targeting and height function for foundation drawing
+    interactionController.setGroundMesh(terrain);
+    interactionController.setHeightFunction((x, z) => terrainBuilder.getHeightAt(x, z));
+
+    // Set up interaction callbacks
+    interactionController.setCallbacks({
+      onMinionChat: (minionId) => {
+        // Trigger chat with minion - switch to conversation mode
+        const minionData = minionsRef.current.get(minionId);
+        if (minionData) {
+          setSelectedMinion(minionId);
+          onMinionClick?.(minionId);
+        }
+      },
+      onMinionQuest: (minionId) => {
+        // Open quest assignment for minion
+        setSelectedMinion(minionId);
+        onMinionClick?.(minionId);
+      },
+      onBuildingStatus: (buildingId) => {
+        onProjectClick?.(buildingId);
+      },
+      onBuildingWorkers: (buildingId) => {
+        onProjectClick?.(buildingId);
+      },
+      onBuildingAesthetic: (buildingId) => {
+        onProjectClick?.(buildingId);
+      },
+      onFoundationComplete: (foundation) => {
+        onFoundationComplete?.(foundation);
+      },
+      onModeChange: (mode) => {
+        onInteractionModeChange?.(mode);
+        // Update menu options when mode changes
+        if (mode === 'menu') {
+          onMenuOptionsChange?.(interactionController.getMenuOptions());
+        } else {
+          onMenuOptionsChange?.(null);
+        }
+      },
+      onStaffStateChange: (state) => {
+        if (firstPersonHandsRef.current) {
+          firstPersonHandsRef.current.setStaffState(state);
+        }
+      },
+      onEntityThrown: (thrown) => {
+        // Start tracking this minion's thrown physics
+        const minionData = minionsRef.current.get(thrown.entityId);
+        if (minionData) {
+          // Set initial position from throw
+          minionData.currentPosition.copy(thrown.position);
+          minionData.instance.mesh.position.copy(thrown.position);
+
+          // Random angular velocity for dramatic spinning
+          const angularVelocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 15,
+            (Math.random() - 0.5) * 20,
+            (Math.random() - 0.5) * 15
+          );
+
+          thrownMinionsRef.current.set(thrown.entityId, {
+            minionId: thrown.entityId,
+            velocity: thrown.velocity.clone(),
+            angularVelocity,
+            bounceCount: 0,
+          });
+        }
+      },
+    });
+
+    // Expose execute action callback to parent
+    onInteractionControllerReady?.((actionId: string) => {
+      interactionController.executeAction(actionId);
+    });
+
     // Add click listener
     renderer.domElement.addEventListener('click', handleClick);
 
@@ -861,13 +941,47 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
 
     function handleMouseMove(event: MouseEvent) {
       if (isFirstPersonRef.current && document.pointerLockElement === renderer.domElement) {
-        fpController.handleMouseMove(event);
+        // Check if menu is open - if so, don't move camera, just track cursor
+        const interactionMode = interactionControllerRef.current?.getMode();
+        if (interactionMode === 'menu') {
+          // Accumulate delta for look-to-select menu
+          interactionControllerRef.current?.handleMouseMove(event);
+          // Throttle React updates to every 50ms to avoid lag
+          const now = performance.now();
+          if (now - lastDeltaUpdateRef.current > 50) {
+            lastDeltaUpdateRef.current = now;
+            const delta = interactionControllerRef.current?.getSelectionDelta();
+            if (delta) {
+              onSelectionDeltaChange?.(delta);
+            }
+          }
+        } else {
+          // Normal camera movement
+          fpController.handleMouseMove(event);
 
-        // Apply sway to hands
-        if (firstPersonHandsRef.current) {
-          firstPersonHandsRef.current.setSway(event.movementX, event.movementY);
+          // Apply sway to hands
+          if (firstPersonHandsRef.current) {
+            firstPersonHandsRef.current.setSway(event.movementX, event.movementY);
+          }
+
+          // Forward to interaction controller
+          interactionControllerRef.current?.handleMouseMove(event);
         }
       }
+    }
+
+    function handleFirstPersonMouseDown(event: MouseEvent) {
+      if (!isFirstPersonRef.current) return;
+      interactionControllerRef.current?.handleMouseDown(event);
+    }
+
+    function handleFirstPersonMouseUp(event: MouseEvent) {
+      if (!isFirstPersonRef.current) return;
+      interactionControllerRef.current?.handleMouseUp(event);
+
+      // Check if quick info should be shown
+      const showQuickInfo = interactionControllerRef.current?.shouldShowQuickInfo() ?? false;
+      onQuickInfoChange?.(showQuickInfo);
     }
 
     function handlePointerLockChange() {
@@ -949,6 +1063,8 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mousedown', handleFirstPersonMouseDown);
+    document.addEventListener('mouseup', handleFirstPersonMouseUp);
     document.addEventListener('pointerlockchange', handlePointerLockChange);
 
     // Helper function to check if position is inside building
@@ -994,45 +1110,13 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     // Set wizard behavior callbacks
     wizardBehavior.setCallbacks(getGroundHeight, isInsideBuilding);
 
-    // Auto-enter first person mode on startup (spawn at portal, facing cottage)
-    // We do this after a small delay to ensure everything is initialized
-    let hasAutoEnteredFirstPerson = false;
-
     // Animation loop
     let lastTime = 0;
     function animate(time: number) {
-      animationFrameIdRef.current = requestAnimationFrame(animate);
+      requestAnimationFrame(animate);
       const deltaTime = Math.min((time - lastTime) / 1000, 0.1);
       lastTime = time;
       const elapsedTime = time / 1000;
-
-      // Auto-enter first person mode after first frame (so everything is ready)
-      if (!hasAutoEnteredFirstPerson && elapsedTime > 0.1) {
-        hasAutoEnteredFirstPerson = true;
-        // Small timeout to let the scene settle
-        setTimeout(() => {
-          if (!cameraController.isTransitioning() && cameraController.getMode() === 'isometric') {
-            // Enter first person at spawn point, facing NORTH (toward cottage)
-            const wizard = wizardRef.current;
-            if (wizard) {
-              const wizardPos = wizard.mesh.position.clone();
-              // Face north (negative Z direction) with yaw = 0
-              // In Three.js, default camera looks toward -Z (local)
-              // yaw=0 means looking toward -Z (north in world space)
-              // yaw=PI means looking toward +Z (south)
-              cameraController.enterFirstPerson(wizardPos, 0); // yaw=0 for north
-              isFirstPersonRef.current = true;
-              useGameStore.getState().setCameraMode('firstPerson');
-              wizard.mesh.visible = false;
-              wizardBehaviorRef.current?.enterConversation();
-              if (firstPersonHandsRef.current) {
-                firstPersonHandsRef.current.setVisible(true);
-              }
-              renderer.domElement.requestPointerLock();
-            }
-          }
-        }, 100);
-      }
 
       // Update day/night cycle
       dayNightCycle.update(deltaTime);
@@ -1050,16 +1134,6 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       if (waterfallRef.current) {
         waterfallRef.current.update(deltaTime);
         waterfallRef.current.setTimeOfDay(timeOfDay);
-      }
-
-      // Update portal gateway animation
-      if (portalGatewayRef.current) {
-        portalGatewayRef.current.update(deltaTime);
-      }
-
-      // Update river water animation
-      if (terrainBuilderRef.current) {
-        terrainBuilderRef.current.updateAnimations(deltaTime);
       }
 
       // Update interior lights based on time of day
@@ -1198,19 +1272,14 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
         }
       }
 
-      // Update rats with player position for flee behavior
-      if (ratSystemRef.current) {
-        ratSystemRef.current.update(
-          deltaTime,
-          cameraController.getCamera().position,
-          isFirstPersonRef.current
-        );
-      }
-
       // === FIRST PERSON MODE UPDATE ===
       if (isFirstPersonRef.current && cameraController.getMode() === 'firstPerson') {
         // Update first person controller with terrain and collision
-        cameraController.updateFirstPerson(deltaTime, terrainBuilder, collisionMeshesRef.current);
+        // Only update camera movement if not in menu mode
+        const interactionMode = interactionControllerRef.current?.getMode();
+        if (interactionMode !== 'menu') {
+          cameraController.updateFirstPerson(deltaTime, terrainBuilder, collisionMeshesRef.current);
+        }
 
         // Update first person hands animation
         if (firstPersonHandsRef.current) {
@@ -1218,6 +1287,21 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
           const speed = fpController.getVelocity().length() / 5; // Normalize to 0-1ish
           firstPersonHandsRef.current.setBobbing(isMoving, speed);
           firstPersonHandsRef.current.update(deltaTime, elapsedTime);
+        }
+
+        // Update interaction controller (targeting, force grab physics, etc.)
+        if (interactionControllerRef.current) {
+          interactionControllerRef.current.update(deltaTime);
+
+          // Update quick info visibility
+          const showQuickInfo = interactionControllerRef.current.shouldShowQuickInfo();
+          const target = interactionControllerRef.current.getCurrentTarget();
+          if (showQuickInfo && target) {
+            onQuickInfoChange?.(true);
+          }
+
+          // Notify parent of target changes
+          onTargetChange?.(target);
         }
 
         // Skip wizard wandering updates when in first person
@@ -1276,13 +1360,154 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       const conversationState = useGameStore.getState().conversation;
       const inConversation = conversationState.active;
 
+      // Update thrown minions physics (only if there are any)
+      if (thrownMinionsRef.current.size > 0) {
+        const GRAVITY = 35;
+        const BOUNCE_DAMPING = 0.55;
+        const MIN_BOUNCE_VELOCITY = 2;
+        const MAX_BOUNCES = 4;
+        const worldLimit = WORLD_HALF_SIZE * 0.95;
+
+        thrownMinionsRef.current.forEach((thrown, minionId) => {
+          const minionData = minionsRef.current.get(minionId);
+          if (!minionData) {
+            thrownMinionsRef.current.delete(minionId);
+            return;
+          }
+
+          // Apply gravity and update position inline (no cloning)
+          thrown.velocity.y -= GRAVITY * deltaTime;
+          minionData.currentPosition.x += thrown.velocity.x * deltaTime;
+          minionData.currentPosition.y += thrown.velocity.y * deltaTime;
+          minionData.currentPosition.z += thrown.velocity.z * deltaTime;
+
+          // Get ground height
+          const groundY = getGroundHeight(minionData.currentPosition.x, minionData.currentPosition.z);
+
+          // Bounce on ground collision
+          if (minionData.currentPosition.y <= groundY && thrown.velocity.y < 0) {
+            thrown.bounceCount++;
+            minionData.currentPosition.y = groundY;
+            thrown.velocity.y = -thrown.velocity.y * BOUNCE_DAMPING;
+            thrown.velocity.x = thrown.velocity.x * 0.7 + (Math.random() - 0.5) * 3;
+            thrown.velocity.z = thrown.velocity.z * 0.7 + (Math.random() - 0.5) * 3;
+            thrown.angularVelocity.x += (Math.random() - 0.5) * 10;
+            thrown.angularVelocity.z += (Math.random() - 0.5) * 10;
+
+            if (Math.abs(thrown.velocity.y) < MIN_BOUNCE_VELOCITY || thrown.bounceCount >= MAX_BOUNCES) {
+              minionData.currentPosition.y = groundY;
+              minionData.instance.mesh.position.copy(minionData.currentPosition);
+              minionData.instance.mesh.rotation.set(0, minionData.instance.mesh.rotation.y, 0);
+              minionData.isMoving = false;
+              minionData.idleTimer = 2 + Math.random() * 2;
+              thrownMinionsRef.current.delete(minionId);
+              return;
+            }
+          }
+
+          // World bounds
+          if (Math.abs(minionData.currentPosition.x) > worldLimit) {
+            minionData.currentPosition.x = Math.sign(minionData.currentPosition.x) * worldLimit;
+            thrown.velocity.x *= -0.5;
+          }
+          if (Math.abs(minionData.currentPosition.z) > worldLimit) {
+            minionData.currentPosition.z = Math.sign(minionData.currentPosition.z) * worldLimit;
+            thrown.velocity.z *= -0.5;
+          }
+
+          // Update mesh
+          minionData.instance.mesh.position.copy(minionData.currentPosition);
+          minionData.instance.mesh.rotation.x += thrown.angularVelocity.x * deltaTime;
+          minionData.instance.mesh.rotation.y += thrown.angularVelocity.y * deltaTime;
+          minionData.instance.mesh.rotation.z += thrown.angularVelocity.z * deltaTime;
+          thrown.angularVelocity.multiplyScalar(0.98);
+        });
+      }
+
       // Animate minions
+      const grabbedMinionId = interactionControllerRef.current?.getGrabbedEntityId();
+      const suspendedMinionId = interactionControllerRef.current?.getSuspendedEntityId();
+      const hasThrownMinions = thrownMinionsRef.current.size > 0;
       minionsRef.current.forEach((data) => {
+        // Skip if being thrown (physics handled above) - only check if there are thrown minions
+        const isThrown = hasThrownMinions && thrownMinionsRef.current.has(data.minionId);
+
+        // Check if this minion is being force grabbed or suspended (menu open)
+        const isGrabbed = grabbedMinionId === data.minionId;
+        const isSuspended = suspendedMinionId === data.minionId;
+
         // Check if this minion is in conversation
         const isConversing = inConversation && conversationState.minionId === data.minionId;
 
-        // Update animator (not moving if conversing)
-        data.instance.animator.update(deltaTime, elapsedTime, data.isMoving && !isConversing);
+        // Skip normal updates if thrown (physics handled separately)
+        if (isThrown) {
+          // Just update animator for flailing effect
+          data.instance.animator.update(deltaTime, elapsedTime, false);
+
+          // Chaotic limb flailing during flight
+          const refs = data.instance.refs;
+          const flailSpeed = 15;
+          const flailAmount = 1.2;
+          if (refs.leftHand) {
+            refs.leftHand.rotation.x = Math.sin(elapsedTime * flailSpeed) * flailAmount;
+            refs.leftHand.rotation.z = Math.cos(elapsedTime * flailSpeed * 0.7) * flailAmount;
+          }
+          if (refs.rightHand) {
+            refs.rightHand.rotation.x = Math.sin(elapsedTime * flailSpeed + Math.PI) * flailAmount;
+            refs.rightHand.rotation.z = Math.cos(elapsedTime * flailSpeed * 0.7 + Math.PI) * flailAmount;
+          }
+          if (refs.leftLeg) {
+            refs.leftLeg.rotation.x = Math.sin(elapsedTime * flailSpeed * 0.9) * flailAmount;
+          }
+          if (refs.rightLeg) {
+            refs.rightLeg.rotation.x = Math.sin(elapsedTime * flailSpeed * 0.9 + Math.PI) * flailAmount;
+          }
+          return; // Skip rest of normal minion logic
+        }
+
+        // Update animator (not moving if conversing, grabbed, or suspended)
+        data.instance.animator.update(deltaTime, elapsedTime, data.isMoving && !isConversing && !isGrabbed && !isSuspended);
+
+        // If grabbed or suspended (menu open), apply ragdoll effect
+        // Grabbed: ForceGrabController handles position
+        // Suspended: hover in place with spin
+        if (isGrabbed || isSuspended) {
+          const refs = data.instance.refs;
+          const mesh = data.instance.mesh;
+
+          // Chaotic limb flailing
+          const flailSpeed = 12;
+          const flailAmount = 0.8;
+          if (refs.leftHand) {
+            refs.leftHand.rotation.x = Math.sin(elapsedTime * flailSpeed) * flailAmount;
+            refs.leftHand.rotation.z = Math.cos(elapsedTime * flailSpeed * 0.7) * flailAmount * 0.5;
+          }
+          if (refs.rightHand) {
+            refs.rightHand.rotation.x = Math.sin(elapsedTime * flailSpeed + Math.PI) * flailAmount;
+            refs.rightHand.rotation.z = Math.cos(elapsedTime * flailSpeed * 0.7 + Math.PI) * flailAmount * 0.5;
+          }
+          if (refs.leftLeg) {
+            refs.leftLeg.rotation.x = Math.sin(elapsedTime * flailSpeed * 0.8) * flailAmount * 0.6;
+          }
+          if (refs.rightLeg) {
+            refs.rightLeg.rotation.x = Math.sin(elapsedTime * flailSpeed * 0.8 + Math.PI) * flailAmount * 0.6;
+          }
+
+          // For suspended (not grabbed), we control position/rotation here
+          // Grabbed minions have position handled by ForceGrabController
+          if (isSuspended && !isGrabbed) {
+            // Hover up slightly and spin
+            const hoverHeight = 0.5 + Math.sin(elapsedTime * 2) * 0.1;
+            mesh.position.y = data.currentPosition.y + hoverHeight;
+
+            // Spin and wobble
+            mesh.rotation.y += deltaTime * 2; // Gentle spin
+            mesh.rotation.x = Math.sin(elapsedTime * 3) * 0.2;
+            mesh.rotation.z = Math.cos(elapsedTime * 2.5) * 0.15;
+          }
+
+          return; // Skip all normal movement logic
+        }
 
         // Check if inside building
         data.isInsideBuilding = isInsideBuilding(
@@ -1435,11 +1660,12 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
     window.addEventListener('resize', handleResize);
 
     return () => {
-      cancelAnimationFrame(animationFrameIdRef.current);
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mousedown', handleFirstPersonMouseDown);
+      document.removeEventListener('mouseup', handleFirstPersonMouseUp);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
       renderer.domElement.removeEventListener('click', handleClick);
       controls.dispose();
@@ -1450,7 +1676,7 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       torchManagerRef.current?.dispose();
       skyEnvironmentRef.current?.dispose();
       waterfallRef.current?.dispose();
-      portalGatewayRef.current?.dispose();
+      interactionControllerRef.current?.dispose();
       if (islandEdgeRef.current) {
         scene.remove(islandEdgeRef.current);
       }
@@ -1464,11 +1690,6 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
         scene.remove(animal.mesh);
       }
       wildlifeRef.current = [];
-      // Cleanup rats
-      if (ratSystemRef.current) {
-        ratSystemRef.current.dispose();
-        ratSystemRef.current = null;
-      }
       // Cleanup cloud shadows
       for (const cloud of cloudShadowsRef.current) {
         scene.remove(cloud.mesh);
@@ -1602,6 +1823,13 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
           personality,
           selectionCrystal,
         });
+
+        // Register with interaction controller
+        interactionControllerRef.current?.registerMinion(minion.id, instance.mesh, {
+          name: minion.name,
+          state: minion.state,
+          personality,
+        });
       }
     });
 
@@ -1615,6 +1843,8 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
         if (torchManagerRef.current) {
           torchManagerRef.current.removeTorch(data.torchId);
         }
+        // Unregister from interaction controller
+        interactionControllerRef.current?.unregisterEntity(minionId);
         currentMinions.delete(minionId);
       }
     });
@@ -1704,6 +1934,12 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
         scene.add(building.group);
         currentBuildings.set(project.id, building);
         buildingsChanged = true;
+
+        // Register with interaction controller
+        interactionControllerRef.current?.registerBuilding(project.id, building.group, {
+          name: project.name,
+          buildingType: project.building.type,
+        });
       }
     }
 
@@ -1712,6 +1948,8 @@ export function SimpleScene({ onMinionClick, onProjectClick, selectedProjectId }
       if (!projects.find((p) => p.id === projectId)) {
         scene.remove(building.group);
         building.dispose();
+        // Unregister from interaction controller
+        interactionControllerRef.current?.unregisterEntity(projectId);
         currentBuildings.delete(projectId);
         buildingsChanged = true;
       }

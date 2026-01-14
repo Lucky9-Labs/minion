@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { StaffState } from '@/types/interaction';
 
 export interface FirstPersonHandsConfig {
   // Position offset from camera
@@ -25,7 +26,7 @@ export const DEFAULT_HANDS_CONFIG: FirstPersonHandsConfig = {
 export class FirstPersonHands {
   private config: FirstPersonHandsConfig;
   private group: THREE.Group;
-  private staff: THREE.Group;
+  private staff!: THREE.Group;
   private orbLight!: THREE.PointLight;
   private floatingGem!: THREE.Mesh;
   private gemGlow!: THREE.Mesh;
@@ -38,6 +39,11 @@ export class FirstPersonHands {
   private bobPhase: number = 0;
   private bobAmount: number = 0;
   private gemRotation: number = 0;
+
+  // Staff interaction state
+  private staffState: StaffState = 'idle';
+  private stateTransition: number = 0; // 0-1 for smooth transitions
+  private targetStateIntensity: number = 0;
 
   constructor(config: Partial<FirstPersonHandsConfig> = {}) {
     this.config = {
@@ -197,9 +203,62 @@ export class FirstPersonHands {
   }
 
   /**
+   * Set the staff state for interaction animations
+   */
+  setStaffState(state: StaffState): void {
+    this.staffState = state;
+
+    // Set target intensity based on state
+    switch (state) {
+      case 'aiming':
+        this.targetStateIntensity = 0.3;
+        break;
+      case 'charging':
+        this.targetStateIntensity = 0.6;
+        break;
+      case 'grabbing':
+        this.targetStateIntensity = 1.0;
+        break;
+      case 'drawing':
+        this.targetStateIntensity = 0.8;
+        break;
+      case 'idle':
+      default:
+        this.targetStateIntensity = 0;
+        break;
+    }
+  }
+
+  /**
+   * Get the world position of the staff gem tip
+   */
+  getGemWorldPosition(camera: THREE.Camera): THREE.Vector3 {
+    // Calculate gem position in world space
+    const gemLocalPos = new THREE.Vector3(0, 0.55, 0);
+
+    // Get group world matrix
+    this.group.updateWorldMatrix(true, false);
+    this.staff.updateWorldMatrix(true, false);
+    this.floatingGem.updateWorldMatrix(true, false);
+
+    // Transform to world coordinates
+    const worldPos = gemLocalPos.clone();
+    worldPos.applyMatrix4(this.floatingGem.matrixWorld);
+
+    return worldPos;
+  }
+
+  /**
    * Update animation state
    */
   update(deltaTime: number, elapsedTime: number): void {
+    // Smooth state intensity transition
+    this.stateTransition = THREE.MathUtils.lerp(
+      this.stateTransition,
+      this.targetStateIntensity,
+      deltaTime * 5
+    );
+
     // Smooth sway interpolation
     this.currentSwayX = THREE.MathUtils.lerp(this.currentSwayX, this.targetSwayX, deltaTime * 8);
     this.currentSwayY = THREE.MathUtils.lerp(this.currentSwayY, this.targetSwayY, deltaTime * 8);
@@ -208,35 +267,92 @@ export class FirstPersonHands {
     this.targetSwayX *= 0.95;
     this.targetSwayY *= 0.95;
 
-    // Apply sway to staff rotation
-    this.staff.rotation.y = this.config.baseRotation.y + this.currentSwayX;
-    this.staff.rotation.x = this.config.baseRotation.x + this.currentSwayY;
+    // Calculate state-based rotation offsets
+    let rotationXOffset = 0;
+    let rotationYOffset = 0;
+    let positionXOffset = 0;
+    let positionYOffset = 0;
+    let positionZOffset = 0;
+
+    switch (this.staffState) {
+      case 'aiming':
+        // Staff tilts forward slightly
+        rotationXOffset = -0.15 * this.stateTransition;
+        positionZOffset = -0.1 * this.stateTransition;
+        break;
+      case 'charging':
+        // Staff vibrates, preparing for action
+        const vibration = Math.sin(elapsedTime * 30) * 0.01 * this.stateTransition;
+        positionXOffset = vibration;
+        positionYOffset = vibration;
+        rotationXOffset = -0.2 * this.stateTransition;
+        break;
+      case 'grabbing':
+        // Staff held firmly forward
+        rotationXOffset = -0.3 * this.stateTransition;
+        positionYOffset = 0.1 * this.stateTransition;
+        positionZOffset = -0.15 * this.stateTransition;
+        break;
+      case 'drawing':
+        // Staff points down toward ground
+        rotationXOffset = 0.4 * this.stateTransition;
+        positionYOffset = -0.1 * this.stateTransition;
+        break;
+    }
+
+    // Apply sway to staff rotation with state offsets
+    this.staff.rotation.y = this.config.baseRotation.y + this.currentSwayX + rotationYOffset;
+    this.staff.rotation.x = this.config.baseRotation.x + this.currentSwayY + rotationXOffset;
 
     // Bob animation
     if (this.bobAmount > 0.001) {
       this.bobPhase += deltaTime * 12;
       const bob = Math.sin(this.bobPhase) * this.bobAmount;
-      this.group.position.y = this.config.positionOffset.y + bob;
+      this.group.position.y = this.config.positionOffset.y + bob + positionYOffset;
       // Slight horizontal sway when moving
-      this.group.position.x = this.config.positionOffset.x + Math.cos(this.bobPhase * 0.5) * this.bobAmount * 0.3;
+      this.group.position.x = this.config.positionOffset.x + Math.cos(this.bobPhase * 0.5) * this.bobAmount * 0.3 + positionXOffset;
+      this.group.position.z = this.config.positionOffset.z + positionZOffset;
     } else {
       // Gentle idle sway
       const idleSway = Math.sin(elapsedTime * 1.5) * 0.003;
-      this.group.position.y = this.config.positionOffset.y + idleSway;
+      this.group.position.y = this.config.positionOffset.y + idleSway + positionYOffset;
+      this.group.position.x = this.config.positionOffset.x + positionXOffset;
+      this.group.position.z = this.config.positionOffset.z + positionZOffset;
     }
 
-    // Spin the floating gem
-    this.gemRotation += deltaTime * 2.5;
+    // Spin the floating gem (faster during interaction)
+    const gemSpinMultiplier = 1 + this.stateTransition * 2;
+    this.gemRotation += deltaTime * 2.5 * gemSpinMultiplier;
     this.floatingGem.rotation.y = this.gemRotation;
-    // Add gentle floating motion
-    this.floatingGem.position.y = 0.55 + Math.sin(elapsedTime * 2) * 0.015;
 
-    // Gem glow pulsing
-    const pulse = 0.15 + Math.sin(elapsedTime * 2.5) * 0.08;
+    // Add gentle floating motion (more pronounced during interaction)
+    const floatAmplitude = 0.015 + this.stateTransition * 0.02;
+    this.floatingGem.position.y = 0.55 + Math.sin(elapsedTime * 2) * floatAmplitude;
+
+    // Gem glow pulsing (brighter during interaction)
+    const baseGlow = 0.15 + this.stateTransition * 0.3;
+    const pulseAmplitude = 0.08 + this.stateTransition * 0.15;
+    const pulseSpeed = 2.5 + this.stateTransition * 4;
+    const pulse = baseGlow + Math.sin(elapsedTime * pulseSpeed) * pulseAmplitude;
     (this.gemGlow.material as THREE.MeshBasicMaterial).opacity = pulse;
 
-    // Light intensity variation synced with gem
-    this.orbLight.intensity = 0.6 + Math.sin(elapsedTime * 2.5) * 0.2;
+    // Update gem emissive intensity
+    const gemMaterial = this.floatingGem.material as THREE.MeshStandardMaterial;
+    gemMaterial.emissiveIntensity = 1.0 + this.stateTransition * 1.5;
+
+    // Light intensity variation synced with gem (brighter during interaction)
+    const baseIntensity = 0.6 + this.stateTransition * 0.8;
+    const intensityVariation = 0.2 + this.stateTransition * 0.3;
+    this.orbLight.intensity = baseIntensity + Math.sin(elapsedTime * pulseSpeed) * intensityVariation;
+
+    // Change light color based on state
+    if (this.staffState === 'grabbing') {
+      this.orbLight.color.lerp(new THREE.Color(0xffcc00), deltaTime * 5);
+    } else if (this.staffState === 'drawing') {
+      this.orbLight.color.lerp(new THREE.Color(0x66ccff), deltaTime * 5);
+    } else {
+      this.orbLight.color.lerp(new THREE.Color(0x9966ff), deltaTime * 3);
+    }
   }
 
   /**
