@@ -28,6 +28,18 @@ import { FirstPersonHands } from '@/lib/FirstPersonHands';
 import { StaffInteractionController } from '@/lib/interaction';
 import type { ThrownEntity } from '@/lib/interaction/StaffInteractionController';
 import type { InteractionMode, MenuOption, DrawnFoundation } from '@/types/interaction';
+import { vec3Pool, resetAllPools } from '@/lib/vectorPool';
+import { lodManager, LODVisibility } from '@/lib/lodSystem';
+import {
+  walkabilityCache,
+  throttledUpdates,
+  UPDATE_INTERVALS,
+  horizontalDistance,
+  moveToward,
+  updateInteriorLight,
+  randomRange,
+  performanceMonitor,
+} from '@/lib/optimizedUpdates';
 
 // Minion data for tracking position and movement
 interface MinionSceneData {
@@ -145,6 +157,9 @@ export function SimpleScene({
   const isFirstPersonRef = useRef<boolean>(false);
   const lastDeltaUpdateRef = useRef<number>(0);
   const thrownMinionsRef = useRef<Map<string, ThrownMinionState>>(new Map());
+
+  // Ref for stable click handler - avoids effect re-runs when dependencies change
+  const handleClickRef = useRef<((event: MouseEvent) => void) | null>(null);
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
@@ -319,6 +334,11 @@ export function SimpleScene({
       }
     }
   }, [setSelectedMinion, onMinionClick, onProjectClick, enterConversation, transitionToMinion]);
+
+  // Keep ref in sync with latest callback (allows stable event listener)
+  useEffect(() => {
+    handleClickRef.current = handleClick;
+  }, [handleClick]);
 
   // Get reaction based on minion personality
   const getReactionForPersonality = useCallback((personality: 'friendly' | 'cautious' | 'grumpy'): ReactionType => {
@@ -903,8 +923,9 @@ export function SimpleScene({
       interactionController.executeAction(actionId);
     });
 
-    // Add click listener
-    renderer.domElement.addEventListener('click', handleClick);
+    // Add click listener - use wrapper to avoid effect re-runs when handleClick changes
+    const clickHandler = (event: MouseEvent) => handleClickRef.current?.(event);
+    renderer.domElement.addEventListener('click', clickHandler);
 
     // === FIRST PERSON MODE INPUT HANDLING ===
     const fpController = cameraController.getFirstPersonController();
@@ -1017,6 +1038,13 @@ export function SimpleScene({
         firstPersonHandsRef.current.setVisible(true);
       }
 
+      // === FIRST PERSON OPTIMIZATIONS ===
+      // Reduce shadow quality for better performance
+      renderer.shadowMap.type = THREE.BasicShadowMap;
+      if (dayNightCycleRef.current) {
+        dayNightCycleRef.current.setShadowMapSize(256);
+      }
+
       // Request pointer lock
       renderer.domElement.requestPointerLock();
     }
@@ -1054,6 +1082,13 @@ export function SimpleScene({
       // Exit first person camera mode
       cameraController.exitFirstPerson();
       isFirstPersonRef.current = false;
+
+      // === RESTORE ISOMETRIC QUALITY ===
+      // Restore shadow quality
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      if (dayNightCycleRef.current) {
+        dayNightCycleRef.current.setShadowMapSize(512);
+      }
 
       // Update store camera mode
       useGameStore.getState().setCameraMode('isometric');
@@ -1118,6 +1153,16 @@ export function SimpleScene({
       lastTime = time;
       const elapsedTime = time / 1000;
 
+      // Reset object pools at start of frame
+      resetAllPools();
+
+      // Track performance
+      performanceMonitor.recordFrameTime(deltaTime * 1000);
+
+      // Update LOD manager with camera position
+      lodManager.updateCamera(cameraController.getCamera());
+      lodManager.setFirstPersonMode(isFirstPersonRef.current);
+
       // Update day/night cycle
       dayNightCycle.update(deltaTime);
 
@@ -1136,28 +1181,23 @@ export function SimpleScene({
         waterfallRef.current.setTimeOfDay(timeOfDay);
       }
 
-      // Update interior lights based on time of day
+      // Update interior lights based on time of day (throttled)
       // Night is roughly 0-0.22 and 0.78-1.0
       const isNight = timeOfDay < 0.22 || timeOfDay > 0.78;
       const targetIntensity = isNight ? 1.0 : 0;
 
-      for (const interiorLight of interiorLightsRef.current) {
-        const currentIntensity = interiorLight.light.intensity;
-        const diff = targetIntensity - currentIntensity;
-
-        if (Math.abs(diff) > 0.01) {
-          interiorLight.light.intensity += diff * deltaTime * 3;
-        } else {
-          interiorLight.light.intensity = targetIntensity;
+      // Only update lights at reduced frequency
+      if (throttledUpdates.shouldUpdate('interior-lights', elapsedTime, UPDATE_INTERVALS.INTERIOR_LIGHTS)) {
+        for (let i = 0; i < interiorLightsRef.current.length; i++) {
+          const interiorLight = interiorLightsRef.current[i];
+          updateInteriorLight(
+            interiorLight.light,
+            interiorLight.fixture,
+            targetIntensity,
+            deltaTime * 2, // Compensate for reduced update frequency
+            `interior-${i}`
+          );
         }
-
-        // Toggle flame visibility based on lit state
-        interiorLight.fixture.traverse((child) => {
-          if (child instanceof THREE.Mesh &&
-              child.material instanceof THREE.MeshBasicMaterial) {
-            child.visible = interiorLight.light.intensity > 0.1;
-          }
-        });
       }
 
       // Animate magic orb - gentle floating rotation
@@ -1182,19 +1222,22 @@ export function SimpleScene({
         baseMat.opacity = 0.06 + Math.sin(elapsedTime * 0.3 + cloud.offset.x * 0.1) * 0.03;
       }
 
-      // Animate wildlife (squirrels, rabbits hopping)
-      for (const animal of wildlifeRef.current) {
+      // Animate wildlife (squirrels, rabbits hopping) - throttled AI updates
+      const shouldUpdateWildlifeAI = throttledUpdates.shouldUpdate('wildlife-ai', elapsedTime, UPDATE_INTERVALS.WILDLIFE_AI);
+
+      for (let i = 0; i < wildlifeRef.current.length; i++) {
+        const animal = wildlifeRef.current[i];
         animal.hopPhase += deltaTime * (animal.isMoving ? 12 : 2);
 
         if (animal.isMoving && animal.targetPosition) {
-          // Move toward target with hopping motion
-          const direction = animal.targetPosition.clone().sub(animal.position);
-          const horizontalDir = new THREE.Vector3(direction.x, 0, direction.z);
-          const horizontalDist = horizontalDir.length();
+          // Move toward target with hopping motion - use pooled vectors
+          const dx = animal.targetPosition.x - animal.position.x;
+          const dz = animal.targetPosition.z - animal.position.z;
+          const horizontalDist = Math.sqrt(dx * dx + dz * dz);
 
           // Face movement direction
           if (horizontalDist > 0.01) {
-            animal.mesh.rotation.y = Math.atan2(horizontalDir.x, horizontalDir.z);
+            animal.mesh.rotation.y = Math.atan2(dx, dz);
           }
 
           const moveDistance = animal.speed * deltaTime;
@@ -1204,24 +1247,22 @@ export function SimpleScene({
             animal.position.copy(animal.targetPosition);
             animal.isMoving = false;
             animal.targetPosition = null;
-            animal.idleTimer = 2 + Math.random() * 5; // Longer idle for animals
+            animal.idleTimer = randomRange(2, 7);
           } else {
-            // Calculate next position
-            horizontalDir.normalize().multiplyScalar(moveDistance);
-            const nextX = animal.position.x + horizontalDir.x;
-            const nextZ = animal.position.z + horizontalDir.z;
+            // Calculate next position inline (no vector allocation)
+            const scale = moveDistance / horizontalDist;
+            const nextX = animal.position.x + dx * scale;
+            const nextZ = animal.position.z + dz * scale;
 
-            // Check if next position is walkable (not in water unless on bridge)
-            if (terrainBuilder.isWalkable(nextX, nextZ)) {
-              // Move with hopping
+            // Check if next position is walkable (cached)
+            if (walkabilityCache.isWalkable(nextX, nextZ, (x, z) => terrainBuilder.isWalkable(x, z))) {
               animal.position.x = nextX;
               animal.position.z = nextZ;
-              animal.position.y = terrainBuilder.getHeightAt(animal.position.x, animal.position.z);
+              animal.position.y = terrainBuilder.getHeightAt(nextX, nextZ);
             } else {
-              // Hit water - stop and find new path
               animal.isMoving = false;
               animal.targetPosition = null;
-              animal.idleTimer = 0.5 + Math.random();
+              animal.idleTimer = randomRange(0.5, 1.5);
             }
           }
 
@@ -1232,40 +1273,43 @@ export function SimpleScene({
             animal.position.y + hopHeight,
             animal.position.z
           );
-
-          // Tilt during hop
           animal.mesh.rotation.x = Math.sin(animal.hopPhase) * 0.15;
 
         } else {
-          // Idle - occasional small movements
+          // Idle - occasional small movements (only check AI at throttled rate)
           animal.idleTimer -= deltaTime;
 
-          if (animal.idleTimer <= 0) {
+          if (animal.idleTimer <= 0 && shouldUpdateWildlifeAI) {
             // Pick new nearby target - try up to 5 times to find walkable spot
             let foundTarget = false;
             for (let attempt = 0; attempt < 5 && !foundTarget; attempt++) {
               const angle = Math.random() * Math.PI * 2;
-              const dist = 3 + Math.random() * 8;
+              const dist = randomRange(3, 11);
               const targetX = animal.position.x + Math.cos(angle) * dist;
               const targetZ = animal.position.z + Math.sin(angle) * dist;
 
-              // Keep in bounds, away from building, and on walkable terrain
+              // Keep in bounds, away from building, and on walkable terrain (cached)
               if (Math.abs(targetX) < WORLD_HALF_SIZE * 0.85 &&
                   Math.abs(targetZ) < WORLD_HALF_SIZE * 0.85 &&
                   Math.sqrt(targetX * targetX + targetZ * targetZ) > 12 &&
-                  terrainBuilder.isWalkable(targetX, targetZ)) {
+                  walkabilityCache.isWalkable(targetX, targetZ, (x, z) => terrainBuilder.isWalkable(x, z))) {
                 const targetY = terrainBuilder.getHeightAt(targetX, targetZ);
-                animal.targetPosition = new THREE.Vector3(targetX, targetY, targetZ);
+                // Reuse targetPosition if it exists, otherwise create new
+                if (animal.targetPosition) {
+                  animal.targetPosition.set(targetX, targetY, targetZ);
+                } else {
+                  animal.targetPosition = new THREE.Vector3(targetX, targetY, targetZ);
+                }
                 animal.isMoving = true;
                 foundTarget = true;
               }
             }
             if (!foundTarget) {
-              animal.idleTimer = 1 + Math.random() * 2;
+              animal.idleTimer = randomRange(1, 3);
             }
           }
 
-          // Gentle idle animation - slight bob and ear twitches
+          // Gentle idle animation
           const idleBob = Math.sin(elapsedTime * 2 + animal.hopPhase) * 0.02;
           animal.mesh.position.y = animal.position.y + idleBob;
           animal.mesh.rotation.x = 0;
@@ -1523,13 +1567,12 @@ export function SimpleScene({
 
         // Skip movement if conversing - minion stays still and faces wizard
         if (isConversing) {
-          // Face the wizard during conversation
+          // Face the wizard during conversation (no allocation)
           const wizard = wizardRef.current;
           if (wizard) {
-            const dirToWizard = new THREE.Vector3()
-              .subVectors(wizard.mesh.position, data.currentPosition)
-              .normalize();
-            data.instance.mesh.rotation.y = Math.atan2(dirToWizard.x, dirToWizard.z);
+            const dx = wizard.mesh.position.x - data.currentPosition.x;
+            const dz = wizard.mesh.position.z - data.currentPosition.z;
+            data.instance.mesh.rotation.y = Math.atan2(dx, dz);
           }
 
           // Apply position with gentle idle bob
@@ -1543,14 +1586,14 @@ export function SimpleScene({
         }
 
         if (data.isMoving && data.targetPosition) {
-          // Calculate direction to target
-          const direction = data.targetPosition.clone().sub(data.currentPosition);
-          const horizontalDir = new THREE.Vector3(direction.x, 0, direction.z);
-          const horizontalDist = horizontalDir.length();
+          // Calculate direction to target (no allocation - inline math)
+          const dx = data.targetPosition.x - data.currentPosition.x;
+          const dz = data.targetPosition.z - data.currentPosition.z;
+          const horizontalDist = Math.sqrt(dx * dx + dz * dz);
 
           // Face movement direction
           if (horizontalDist > 0.01) {
-            data.instance.mesh.rotation.y = Math.atan2(horizontalDir.x, horizontalDir.z);
+            data.instance.mesh.rotation.y = Math.atan2(dx, dz);
           }
 
           // Move toward target
@@ -1561,29 +1604,23 @@ export function SimpleScene({
             data.currentPosition.copy(data.targetPosition);
             data.isMoving = false;
             data.targetPosition = null;
-            data.idleTimer = 1 + Math.random() * 3;
+            data.idleTimer = randomRange(1, 4);
           } else {
-            // Calculate next position
-            horizontalDir.normalize().multiplyScalar(moveDistance);
-            const nextX = data.currentPosition.x + horizontalDir.x;
-            const nextZ = data.currentPosition.z + horizontalDir.z;
+            // Calculate next position inline (no vector allocation)
+            const scale = moveDistance / horizontalDist;
+            const nextX = data.currentPosition.x + dx * scale;
+            const nextZ = data.currentPosition.z + dz * scale;
 
-            // Check if next position is walkable (not in water unless on bridge)
-            if (terrainBuilder.isWalkable(nextX, nextZ)) {
-              // Move horizontally
+            // Check if next position is walkable (cached)
+            if (walkabilityCache.isWalkable(nextX, nextZ, (x, z) => terrainBuilder.isWalkable(x, z))) {
               data.currentPosition.x = nextX;
               data.currentPosition.z = nextZ;
-
-              // Update Y to follow terrain
-              data.currentPosition.y = getGroundHeight(
-                data.currentPosition.x,
-                data.currentPosition.z
-              );
+              data.currentPosition.y = getGroundHeight(nextX, nextZ);
             } else {
               // Hit water - stop and pick a new destination
               data.isMoving = false;
               data.targetPosition = null;
-              data.idleTimer = 0.5 + Math.random(); // Brief pause before new path
+              data.idleTimer = randomRange(0.5, 1.5);
             }
           }
 
@@ -1667,7 +1704,7 @@ export function SimpleScene({
       document.removeEventListener('mousedown', handleFirstPersonMouseDown);
       document.removeEventListener('mouseup', handleFirstPersonMouseUp);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
-      renderer.domElement.removeEventListener('click', handleClick);
+      renderer.domElement.removeEventListener('click', clickHandler);
       controls.dispose();
       renderer.dispose();
       roomMeshBuilder.dispose();
@@ -1720,7 +1757,8 @@ export function SimpleScene({
         container.removeChild(renderer.domElement);
       }
     };
-  }, [handleClick]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty deps - handleClick accessed via ref to avoid scene recreation
 
   // Sync minions with store (wait for hydration to ensure persisted data is loaded)
   useEffect(() => {

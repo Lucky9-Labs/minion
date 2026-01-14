@@ -27,6 +27,7 @@ interface GameStore extends GameState {
   recruitMinion: (name: string, role: MinionRole, traits: MinionTrait[]) => Minion;
   updateMinionState: (minionId: string, state: Minion['state']) => void;
   updateMinionPosition: (minionId: string, position: { x: number; y: number; z: number }) => void;
+  updateMinionPositionsBatch: (positions: Map<string, { x: number; y: number; z: number }>) => void;
 
   // Quest actions
   createQuest: (title: string, description: string, minionId: string) => Quest;
@@ -177,6 +178,17 @@ export const useGameStore = create<GameStore>()(
           minions: state.minions.map((m) =>
             m.id === minionId ? { ...m, position } : m
           ),
+        }));
+      },
+
+      // Batched position update - more efficient for multiple minions
+      updateMinionPositionsBatch: (positions: Map<string, { x: number; y: number; z: number }>) => {
+        if (positions.size === 0) return;
+        set((state) => ({
+          minions: state.minions.map((m) => {
+            const newPos = positions.get(m.id);
+            return newPos ? { ...m, position: newPos } : m;
+          }),
         }));
       },
 
