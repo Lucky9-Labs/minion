@@ -1,10 +1,13 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ChaudProject } from '@/types/project';
 
 export interface ProjectBuildingMesh {
   group: THREE.Group;
   projectId: string;
+  stoneDetailGroup: THREE.Group | null; // Separate group for LOD control
   dispose: () => void;
+  setDetailLevel: (highDetail: boolean) => void;
 }
 
 // Cottage dimensions - matching the cozy original
@@ -13,18 +16,232 @@ const BASE_DEPTH = 5;
 const WALL_HEIGHT = 3;
 const ROOF_HEIGHT = 2.5;
 
-// Cozy cottage colors - warm and inviting
+// Medieval stone colors - gray stone with wood accents
 const COLORS = {
-  walls: 0xd4a574,     // Warm wood/plaster
-  roof: 0x8b4513,      // Dark brown thatch
-  floor: 0x8b7355,     // Wood floor
-  door: 0x654321,      // Dark wood door
-  windowFrame: 0x4a3728,
-  chimney: 0x8b7355,
-  trim: 0x5d4037,
+  walls: 0x6b7280,     // Gray stone
+  wallsLight: 0x9ca3af, // Light gray stone
+  wallsDark: 0x4b5563,  // Dark gray stone
+  mortar: 0x52525b,     // Mortar between stones
+  roof: 0x8b4513,       // Wood plank roof
+  roofDark: 0x6b4423,   // Dark wood
+  floor: 0x374151,      // Dark stone floor
+  door: 0x4a3728,       // Dark stained wood door
+  windowFrame: 0x374151, // Dark stone window frame
+  chimney: 0x4b5563,    // Gray stone chimney
+  trim: 0x6b4423,       // Wood trim
   glass: 0x87ceeb,
-  scaffold: 0xc4a35a,  // Light wood scaffolding
+  scaffold: 0x8b4513,   // Wood scaffolding
 };
+
+// Stone color variations for 3D blocks
+const STONE_VARIATIONS = [
+  0x6b7280, // base gray
+  0x7c8591, // lighter gray
+  0x5c636e, // darker gray
+  0x757d87, // blue-gray
+  0x636b75, // medium gray
+];
+
+// Seeded random for consistent procedural generation
+function seededRandom(seed: number): () => number {
+  return () => {
+    seed = (seed * 9301 + 49297) % 233280;
+    return seed / 233280;
+  };
+}
+
+// Shared stone material for merged geometry (with vertex colors)
+let sharedStoneMaterial: THREE.MeshStandardMaterial | null = null;
+function getStoneMaterial(): THREE.MeshStandardMaterial {
+  if (!sharedStoneMaterial) {
+    sharedStoneMaterial = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.9,
+      metalness: 0.02,
+    });
+  }
+  return sharedStoneMaterial;
+}
+
+// Add 3D stone blocks to a wall surface (OPTIMIZED - merged geometry)
+// faceDirection: 1 for +Z (front), -1 for -Z (back)
+function addStoneBlocksToWall(
+  group: THREE.Group,
+  width: number,
+  height: number,
+  wallCenterX: number,
+  wallBaseY: number,
+  wallZ: number,
+  faceDirection: number,
+  seed: number
+): void {
+  const random = seededRandom(seed);
+  const geometries: THREE.BufferGeometry[] = [];
+  const blockHeight = 0.5;
+  const rows = Math.floor(height / blockHeight);
+
+  for (let row = 0; row < rows; row++) {
+    const y = wallBaseY + row * blockHeight + blockHeight / 2;
+    let x = wallCenterX - width / 2;
+    if (row % 2 === 1) x += 0.25;
+
+    while (x < wallCenterX + width / 2 - 0.3) {
+      const blockWidth = 0.6 + random() * 0.5;
+      const blockDepth = 0.15 + random() * 0.15;
+      const actualBlockHeight = blockHeight - 0.06;
+      const finalWidth = Math.min(blockWidth, wallCenterX + width / 2 - x - 0.03);
+      if (finalWidth < 0.2) break;
+
+      const blockGeo = new THREE.BoxGeometry(finalWidth, actualBlockHeight, blockDepth);
+
+      // Add vertex colors
+      const color = new THREE.Color(STONE_VARIATIONS[Math.floor(random() * STONE_VARIATIONS.length)]);
+      const colors = new Float32Array(blockGeo.attributes.position.count * 3);
+      for (let i = 0; i < colors.length; i += 3) {
+        colors[i] = color.r;
+        colors[i + 1] = color.g;
+        colors[i + 2] = color.b;
+      }
+      blockGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+      // Position geometry
+      blockGeo.translate(x + finalWidth / 2, y, wallZ + faceDirection * (blockDepth / 2));
+      geometries.push(blockGeo);
+
+      x += finalWidth + 0.04;
+    }
+  }
+
+  if (geometries.length > 0) {
+    const merged = mergeGeometries(geometries, false);
+    if (merged) {
+      const mesh = new THREE.Mesh(merged, getStoneMaterial());
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+    geometries.forEach(g => g.dispose());
+  }
+}
+
+// Add 3D stone blocks to east/west walls (OPTIMIZED - merged geometry)
+function addStoneBlocksToSideWall(
+  group: THREE.Group,
+  depth: number,
+  height: number,
+  wallX: number,
+  wallBaseY: number,
+  faceDirection: number,
+  seed: number
+): void {
+  const random = seededRandom(seed);
+  const geometries: THREE.BufferGeometry[] = [];
+  const blockHeight = 0.5;
+  const rows = Math.floor(height / blockHeight);
+
+  for (let row = 0; row < rows; row++) {
+    const y = wallBaseY + row * blockHeight + blockHeight / 2;
+    let z = -depth / 2;
+    if (row % 2 === 1) z += 0.25;
+
+    while (z < depth / 2 - 0.3) {
+      const blockWidth = 0.6 + random() * 0.5;
+      const blockDepth = 0.15 + random() * 0.15;
+      const actualBlockHeight = blockHeight - 0.06;
+      const finalWidth = Math.min(blockWidth, depth / 2 - z - 0.03);
+      if (finalWidth < 0.2) break;
+
+      const blockGeo = new THREE.BoxGeometry(blockDepth, actualBlockHeight, finalWidth);
+
+      // Add vertex colors
+      const color = new THREE.Color(STONE_VARIATIONS[Math.floor(random() * STONE_VARIATIONS.length)]);
+      const colors = new Float32Array(blockGeo.attributes.position.count * 3);
+      for (let i = 0; i < colors.length; i += 3) {
+        colors[i] = color.r;
+        colors[i + 1] = color.g;
+        colors[i + 2] = color.b;
+      }
+      blockGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+      blockGeo.translate(wallX + faceDirection * (blockDepth / 2), y, z + finalWidth / 2);
+      geometries.push(blockGeo);
+
+      z += finalWidth + 0.04;
+    }
+  }
+
+  if (geometries.length > 0) {
+    const merged = mergeGeometries(geometries, false);
+    if (merged) {
+      const mesh = new THREE.Mesh(merged, getStoneMaterial());
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+    geometries.forEach(g => g.dispose());
+  }
+}
+
+// Add stone blocks to a wall segment (OPTIMIZED - merged geometry)
+function addStoneBlocksToSegment(
+  group: THREE.Group,
+  width: number,
+  height: number,
+  centerX: number,
+  baseY: number,
+  wallZ: number,
+  faceDirection: number,
+  seed: number
+): void {
+  if (height < 0.4 || width < 0.3) return;
+
+  const random = seededRandom(seed);
+  const geometries: THREE.BufferGeometry[] = [];
+  const blockHeight = 0.5;
+  const rows = Math.floor(height / blockHeight);
+
+  for (let row = 0; row < rows; row++) {
+    const y = baseY + row * blockHeight + blockHeight / 2;
+    let x = centerX - width / 2;
+    if (row % 2 === 1) x += 0.2;
+
+    while (x < centerX + width / 2 - 0.25) {
+      const blockWidth = 0.5 + random() * 0.4;
+      const blockDepth = 0.15 + random() * 0.15;
+      const actualBlockHeight = blockHeight - 0.06;
+      const finalWidth = Math.min(blockWidth, centerX + width / 2 - x - 0.03);
+      if (finalWidth < 0.15) break;
+
+      const blockGeo = new THREE.BoxGeometry(finalWidth, actualBlockHeight, blockDepth);
+
+      // Add vertex colors
+      const color = new THREE.Color(STONE_VARIATIONS[Math.floor(random() * STONE_VARIATIONS.length)]);
+      const colors = new Float32Array(blockGeo.attributes.position.count * 3);
+      for (let i = 0; i < colors.length; i += 3) {
+        colors[i] = color.r;
+        colors[i + 1] = color.g;
+        colors[i + 2] = color.b;
+      }
+      blockGeo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+      blockGeo.translate(x + finalWidth / 2, y, wallZ + faceDirection * (blockDepth / 2));
+      geometries.push(blockGeo);
+
+      x += finalWidth + 0.04;
+    }
+  }
+
+  if (geometries.length > 0) {
+    const merged = mergeGeometries(geometries, false);
+    if (merged) {
+      const mesh = new THREE.Mesh(merged, getStoneMaterial());
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+    }
+    geometries.forEach(g => g.dispose());
+  }
+}
 
 export function createProjectBuilding(
   project: ChaudProject,
@@ -36,6 +253,11 @@ export function createProjectBuilding(
   group.userData.projectId = project.id;
   group.userData.isProjectBuilding = true;
 
+  // Separate group for stone detail (LOD control - hidden in isometric)
+  const stoneDetailGroup = new THREE.Group();
+  stoneDetailGroup.visible = false; // Start hidden, enable in first-person
+  group.add(stoneDetailGroup);
+
   const { stage, level } = project.building;
 
   // Calculate floors based on level (merge count) - 1 to 3 floors
@@ -45,34 +267,36 @@ export function createProjectBuilding(
   const isUnderConstruction = stage === 'scaffolding' || stage === 'foundation';
   const isPlanning = stage === 'planning';
 
-  // Materials
+  // Materials - stone has high roughness, wood moderate
   const wallMat = new THREE.MeshStandardMaterial({
     color: COLORS.walls,
-    flatShading: true,
+    roughness: 0.9,
+    metalness: 0.05,
   });
   const roofMat = new THREE.MeshStandardMaterial({
     color: COLORS.roof,
-    flatShading: true,
+    roughness: 0.8,
+    metalness: 0.02,
   });
   const floorMat = new THREE.MeshStandardMaterial({
     color: COLORS.floor,
-    flatShading: true,
+    roughness: 0.95,
   });
   const doorMat = new THREE.MeshStandardMaterial({
     color: COLORS.door,
-    flatShading: true,
+    roughness: 0.75,
   });
   const trimMat = new THREE.MeshStandardMaterial({
     color: COLORS.trim,
-    flatShading: true,
+    roughness: 0.8,
   });
   const chimneyMat = new THREE.MeshStandardMaterial({
     color: COLORS.chimney,
-    flatShading: true,
+    roughness: 0.95,
   });
   const windowFrameMat = new THREE.MeshStandardMaterial({
     color: COLORS.windowFrame,
-    flatShading: true,
+    roughness: 0.9,
   });
 
   const halfW = BASE_WIDTH / 2;
@@ -81,7 +305,7 @@ export function createProjectBuilding(
 
   // Planning stage: just stakes marking the area
   if (isPlanning) {
-    const stakeMat = new THREE.MeshStandardMaterial({ color: 0x8b4513, flatShading: true });
+    const stakeMat = new THREE.MeshStandardMaterial({ color: COLORS.scaffold, roughness: 0.85 });
     const stakeGeo = new THREE.CylinderGeometry(0.08, 0.08, 1);
     const corners = [
       [-halfW - 0.3, -halfD - 0.3],
@@ -97,7 +321,7 @@ export function createProjectBuilding(
     });
 
     addSelectionRing(group);
-    return createBuildingMesh(group, project.id);
+    return createBuildingMesh(group, project.id, null); // No stone detail in planning stage
   }
 
   // === FLOOR ===
@@ -117,29 +341,92 @@ export function createProjectBuilding(
   northWall.receiveShadow = true;
   group.add(northWall);
 
+  // Add 3D stone blocks to north wall (exterior face, facing -Z)
+  // Stone blocks go in separate group for LOD (hidden in isometric view)
+  if (!isPlanning) {
+    addStoneBlocksToWall(
+      stoneDetailGroup,
+      BASE_WIDTH,
+      totalWallHeight,
+      0,           // wallCenterX
+      0.2,         // wallBaseY
+      -halfD,      // wallZ (exterior face)
+      -1,          // faceDirection: -Z (outward)
+      project.id.charCodeAt(0) * 100 + 1
+    );
+  }
+
   // South wall (front) - with door opening
   const doorWidth = 1.2;
   const doorHeight = 2.2;
 
   // Left of door
-  const southLeftGeo = new THREE.BoxGeometry((BASE_WIDTH - doorWidth) / 2, totalWallHeight, wallThickness);
+  const southLeftWidth = (BASE_WIDTH - doorWidth) / 2;
+  const southLeftGeo = new THREE.BoxGeometry(southLeftWidth, totalWallHeight, wallThickness);
   const southLeft = new THREE.Mesh(southLeftGeo, wallMat);
-  southLeft.position.set(-doorWidth / 2 - (BASE_WIDTH - doorWidth) / 4, totalWallHeight / 2 + 0.2, halfD - wallThickness / 2);
+  const southLeftX = -doorWidth / 2 - southLeftWidth / 2;
+  southLeft.position.set(southLeftX, totalWallHeight / 2 + 0.2, halfD - wallThickness / 2);
   southLeft.castShadow = true;
   group.add(southLeft);
 
   // Right of door
   const southRight = new THREE.Mesh(southLeftGeo, wallMat.clone());
-  southRight.position.set(doorWidth / 2 + (BASE_WIDTH - doorWidth) / 4, totalWallHeight / 2 + 0.2, halfD - wallThickness / 2);
+  const southRightX = doorWidth / 2 + southLeftWidth / 2;
+  southRight.position.set(southRightX, totalWallHeight / 2 + 0.2, halfD - wallThickness / 2);
   southRight.castShadow = true;
   group.add(southRight);
 
   // Above door
-  const aboveDoorGeo = new THREE.BoxGeometry(doorWidth, totalWallHeight - doorHeight, wallThickness);
+  const aboveDoorHeight = totalWallHeight - doorHeight;
+  const aboveDoorGeo = new THREE.BoxGeometry(doorWidth, aboveDoorHeight, wallThickness);
   const aboveDoor = new THREE.Mesh(aboveDoorGeo, wallMat.clone());
-  aboveDoor.position.set(0, doorHeight + (totalWallHeight - doorHeight) / 2 + 0.2, halfD - wallThickness / 2);
+  aboveDoor.position.set(0, doorHeight + aboveDoorHeight / 2 + 0.2, halfD - wallThickness / 2);
   aboveDoor.castShadow = true;
   group.add(aboveDoor);
+
+  // Add 3D stone blocks to south wall segments (exterior face, facing +Z)
+  if (!isPlanning) {
+    const southZ = halfD; // exterior face
+    const seedBase = project.id.charCodeAt(0) * 100;
+
+    // Left segment
+    addStoneBlocksToSegment(
+      stoneDetailGroup,
+      southLeftWidth,
+      totalWallHeight,
+      southLeftX,
+      0.2,           // baseY
+      southZ,
+      1,             // faceDirection: +Z (outward)
+      seedBase + 2
+    );
+
+    // Right segment
+    addStoneBlocksToSegment(
+      stoneDetailGroup,
+      southLeftWidth,
+      totalWallHeight,
+      southRightX,
+      0.2,           // baseY
+      southZ,
+      1,             // faceDirection: +Z (outward)
+      seedBase + 3
+    );
+
+    // Above door segment
+    if (aboveDoorHeight > 0.4) {
+      addStoneBlocksToSegment(
+        stoneDetailGroup,
+        doorWidth,
+        aboveDoorHeight,
+        0,
+        doorHeight + 0.2, // baseY starts at door top
+        southZ,
+        1,             // faceDirection: +Z (outward)
+        seedBase + 4
+      );
+    }
+  }
 
   // Door frame
   const doorFrameGeo = new THREE.BoxGeometry(doorWidth + 0.2, doorHeight + 0.1, wallThickness + 0.1);
@@ -155,8 +442,35 @@ export function createProjectBuilding(
   group.add(door);
 
   // East and West walls with windows
-  buildWallWithWindows(group, halfW - wallThickness / 2, 0.2, 0, BASE_DEPTH, totalWallHeight, wallThickness, wallMat, windowFrameMat, floors, -Math.PI / 2);
-  buildWallWithWindows(group, -halfW + wallThickness / 2, 0.2, 0, BASE_DEPTH, totalWallHeight, wallThickness, wallMat, windowFrameMat, floors, Math.PI / 2);
+  const eastWestSeed = project.id.charCodeAt(0) * 100;
+  buildWallWithWindows(group, halfW - wallThickness / 2, 0.2, 0, BASE_DEPTH, totalWallHeight, wallThickness, wallMat, windowFrameMat, floors, -Math.PI / 2, false, eastWestSeed + 10);
+  buildWallWithWindows(group, -halfW + wallThickness / 2, 0.2, 0, BASE_DEPTH, totalWallHeight, wallThickness, wallMat, windowFrameMat, floors, Math.PI / 2, false, eastWestSeed + 20);
+
+  // Add 3D stone blocks to east wall (exterior face, facing +X)
+  if (!isPlanning) {
+    addStoneBlocksToSideWall(
+      stoneDetailGroup,
+      BASE_DEPTH,
+      totalWallHeight,
+      halfW,       // wallX (exterior face)
+      0.2,         // wallBaseY
+      1,           // faceDirection: +X (outward)
+      eastWestSeed + 30
+    );
+  }
+
+  // Add 3D stone blocks to west wall (exterior face, facing -X)
+  if (!isPlanning) {
+    addStoneBlocksToSideWall(
+      stoneDetailGroup,
+      BASE_DEPTH,
+      totalWallHeight,
+      -halfW,      // wallX (exterior face)
+      0.2,         // wallBaseY
+      -1,          // faceDirection: -X (outward)
+      eastWestSeed + 40
+    );
+  }
 
   // === ROOF (pitched, like original cottage) ===
   // Roof dimensions with overhang
@@ -238,7 +552,7 @@ export function createProjectBuilding(
   }
 
   addSelectionRing(group);
-  return createBuildingMesh(group, project.id);
+  return createBuildingMesh(group, project.id, stoneDetailGroup);
 }
 
 function buildWallWithWindows(
@@ -252,7 +566,9 @@ function buildWallWithWindows(
   wallMat: THREE.MeshStandardMaterial,
   windowFrameMat: THREE.MeshStandardMaterial,
   floors: number,
-  rotation: number
+  rotation: number,
+  addStoneTexture: boolean = false,
+  seed: number = 0
 ): void {
   const windowWidth = 1;
   const windowHeight = 1.2;
@@ -320,11 +636,114 @@ function buildWallWithWindows(
     const hCross = new THREE.Mesh(hCrossGeo, windowFrameMat);
     hCross.position.set(0, windowY + windowHeight / 2 + floorOffset, 0.05);
     wallGroup.add(hCross);
+
+    // Add stone blocks to wall segments if enabled
+    if (addStoneTexture) {
+      const segmentZ = wallThickness / 2 + 0.01;
+      const floorSeed = seed + floor * 10;
+      const sideWidth = (wallLen - windowWidth) / 2;
+
+      // Below window stones
+      addStoneBlocksToWallGroup(
+        wallGroup,
+        wallLen,
+        windowY - 0.2,
+        0,
+        (windowY - 0.2) / 2 + floorOffset,
+        segmentZ,
+        floorSeed + 1
+      );
+
+      // Above window stones
+      const aboveHeight = floorHeight - windowY - windowHeight;
+      addStoneBlocksToWallGroup(
+        wallGroup,
+        wallLen,
+        aboveHeight,
+        0,
+        windowY + windowHeight + aboveHeight / 2 + floorOffset,
+        segmentZ,
+        floorSeed + 2
+      );
+
+      // Left of window stones
+      addStoneBlocksToWallGroup(
+        wallGroup,
+        sideWidth,
+        windowHeight,
+        -windowWidth / 2 - sideWidth / 2,
+        windowY + windowHeight / 2 + floorOffset,
+        segmentZ,
+        floorSeed + 3
+      );
+
+      // Right of window stones
+      addStoneBlocksToWallGroup(
+        wallGroup,
+        sideWidth,
+        windowHeight,
+        windowWidth / 2 + sideWidth / 2,
+        windowY + windowHeight / 2 + floorOffset,
+        segmentZ,
+        floorSeed + 4
+      );
+    }
   }
 
   wallGroup.position.set(x, baseY, z);
   wallGroup.rotation.y = rotation;
   group.add(wallGroup);
+}
+
+// Helper to add stone blocks directly to a wall group (for east/west walls)
+function addStoneBlocksToWallGroup(
+  wallGroup: THREE.Group,
+  width: number,
+  height: number,
+  centerX: number,
+  centerY: number,
+  centerZ: number,
+  seed: number
+): void {
+  if (height < 0.4 || width < 0.4) return;
+
+  const random = seededRandom(seed);
+  const blockHeight = 0.5;
+  const rows = Math.floor(height / blockHeight);
+
+  for (let row = 0; row < rows; row++) {
+    const y = -height / 2 + row * blockHeight + blockHeight / 2;
+    let x = -width / 2;
+
+    // Offset every other row for brick pattern
+    if (row % 2 === 1) {
+      x += 0.2;
+    }
+
+    while (x < width / 2 - 0.2) {
+      const blockWidth = 0.5 + random() * 0.4;
+      const blockDepth = 0.15 + random() * 0.15; // More pronounced: 0.15-0.3
+      const actualBlockHeight = blockHeight - 0.06;
+
+      const colorIndex = Math.floor(random() * STONE_VARIATIONS.length);
+      const blockMat = new THREE.MeshStandardMaterial({
+        color: STONE_VARIATIONS[colorIndex],
+        roughness: 0.85 + random() * 0.1,
+        metalness: 0.02,
+      });
+
+      const finalWidth = Math.min(blockWidth, width / 2 - x - 0.03);
+      if (finalWidth < 0.15) break;
+
+      const blockGeo = new THREE.BoxGeometry(finalWidth, actualBlockHeight, blockDepth);
+      const block = new THREE.Mesh(blockGeo, blockMat);
+      block.position.set(centerX + x + finalWidth / 2, centerY + y, centerZ + blockDepth / 2);
+      block.castShadow = true;
+      wallGroup.add(block);
+
+      x += finalWidth + 0.04;
+    }
+  }
 }
 
 function addScaffolding(
@@ -335,7 +754,7 @@ function addScaffolding(
 ): void {
   const scaffoldMat = new THREE.MeshStandardMaterial({
     color: COLORS.scaffold,
-    flatShading: true,
+    roughness: 0.85,
   });
 
   const halfW = width / 2;
@@ -396,10 +815,15 @@ function addSelectionRing(group: THREE.Group): void {
   group.add(ring);
 }
 
-function createBuildingMesh(group: THREE.Group, projectId: string): ProjectBuildingMesh {
+function createBuildingMesh(
+  group: THREE.Group,
+  projectId: string,
+  stoneDetailGroup: THREE.Group | null
+): ProjectBuildingMesh {
   return {
     group,
     projectId,
+    stoneDetailGroup,
     dispose: () => {
       group.traverse((child) => {
         if (child instanceof THREE.Mesh) {
@@ -411,6 +835,11 @@ function createBuildingMesh(group: THREE.Group, projectId: string): ProjectBuild
           }
         }
       });
+    },
+    setDetailLevel: (highDetail: boolean) => {
+      if (stoneDetailGroup) {
+        stoneDetailGroup.visible = highDetail;
+      }
     },
   };
 }
@@ -446,4 +875,14 @@ export function calculateBuildingPosition(
   const offsetZ = (row + 1) * spacing;
 
   return new THREE.Vector3(offsetX, 0, offsetZ);
+}
+
+// Update detail level for all buildings (call when view mode changes)
+export function updateBuildingsDetailLevel(
+  buildings: Map<string, ProjectBuildingMesh>,
+  highDetail: boolean
+): void {
+  buildings.forEach((building) => {
+    building.setDetailLevel(highDetail);
+  });
 }
