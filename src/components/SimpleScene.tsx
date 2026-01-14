@@ -1321,6 +1321,11 @@ export function SimpleScene({
         waterfallRef.current.setTimeOfDay(timeOfDay);
       }
 
+      // Update terrain animations (river water shader)
+      if (terrainBuilderRef.current) {
+        terrainBuilderRef.current.updateAnimations(deltaTime);
+      }
+
       // Update interior lights based on time of day (throttled)
       // Night is roughly 0-0.22 and 0.78-1.0
       const isNight = timeOfDay < 0.22 || timeOfDay > 0.78;

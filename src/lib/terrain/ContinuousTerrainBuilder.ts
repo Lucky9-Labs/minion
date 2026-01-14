@@ -174,8 +174,9 @@ export class ContinuousTerrainBuilder {
     const vertices: number[] = [];
     const uvs: number[] = [];
     const indices: number[] = [];
-    // Water offset below terrain surface (sits in carved valley)
-    const waterDepthOffset = -0.15;
+    // Water offset above terrain surface (valley floor is already carved down)
+    // Positive offset ensures water renders above the ground mesh
+    const waterDepthOffset = 0.1;
 
     // Calculate total river length for UV mapping
     let totalLength = 0;
@@ -292,13 +293,14 @@ export class ContinuousTerrainBuilder {
       shallowColor: new THREE.Color(0x5da4d4),
       deepColor: new THREE.Color(0x1a5a8a),
       flowSpeed: 0.12,
-      flowDirection: new THREE.Vector2(0, 1), // Flow along river
+      flowDirection: new THREE.Vector2(0, -1), // Flow along river (downstream)
       rippleScale: 6.0,
       rippleStrength: 0.4,
       opacity: 0.85,
     });
 
     const waterMesh = new THREE.Mesh(geometry, this.waterMaterial);
+    waterMesh.renderOrder = 1; // Render after ground mesh to avoid Z-fighting
     group.add(waterMesh);
 
     return group;
