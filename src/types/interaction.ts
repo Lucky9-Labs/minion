@@ -46,6 +46,7 @@ export const MINION_MENU_OPTIONS: MenuOption[] = [
   { id: 'chat', label: 'Chat', icon: '💬', description: 'Start conversation' },
   { id: 'quest', label: 'Send on Quest', icon: '📜', description: 'Assign a task' },
   { id: 'grab', label: 'Force Pull', icon: '🤚', description: 'Grab and carry' },
+  { id: 'details', label: 'Details', icon: '📋', description: 'View minion details' },
   { id: 'cancel', label: 'Cancel', icon: '✕', description: 'Close menu' },
 ];
 

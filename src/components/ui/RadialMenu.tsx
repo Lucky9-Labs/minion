@@ -10,6 +10,8 @@ interface RadialMenuProps {
   onCancel: () => void;
   /** Accumulated mouse delta direction for look-to-select */
   selectionDelta: { x: number; y: number };
+  /** Screen position for menu center (null = screen center) */
+  screenPosition?: { x: number; y: number } | null;
 }
 
 const DEAD_ZONE_THRESHOLD = 30; // minimum delta magnitude to register selection
@@ -17,7 +19,7 @@ const SEGMENT_INNER_RADIUS = 50;
 const SEGMENT_OUTER_RADIUS = 110;
 const DIRECTION_INDICATOR_RADIUS = 70; // where the direction indicator appears
 
-export function RadialMenu({ visible, options, onSelect, onCancel, selectionDelta }: RadialMenuProps) {
+export function RadialMenu({ visible, options, onSelect, onCancel, selectionDelta, screenPosition }: RadialMenuProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [centerPosition, setCenterPosition] = useState({ x: 0, y: 0 });
@@ -25,14 +27,23 @@ export function RadialMenu({ visible, options, onSelect, onCancel, selectionDelt
   // Calculate center position on mount
   useEffect(() => {
     if (visible) {
-      setCenterPosition({
-        x: window.innerWidth / 2,
-        y: window.innerHeight / 2,
-      });
+      // Use provided screen position or default to screen center
+      if (screenPosition) {
+        // Clamp position to keep menu fully visible
+        const padding = SEGMENT_OUTER_RADIUS + 40; // Extra padding for labels
+        const clampedX = Math.max(padding, Math.min(window.innerWidth - padding, screenPosition.x));
+        const clampedY = Math.max(padding, Math.min(window.innerHeight - padding, screenPosition.y));
+        setCenterPosition({ x: clampedX, y: clampedY });
+      } else {
+        setCenterPosition({
+          x: window.innerWidth / 2,
+          y: window.innerHeight / 2,
+        });
+      }
       // Reset selection when menu opens
       setSelectedIndex(null);
     }
-  }, [visible]);
+  }, [visible, screenPosition]);
 
   // Calculate selected segment based on accumulated delta direction (look-to-select)
   useEffect(() => {

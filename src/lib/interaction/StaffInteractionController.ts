@@ -26,6 +26,7 @@ export interface ThrownEntity {
 interface StaffInteractionCallbacks {
   onMinionChat?: (minionId: string) => void;
   onMinionQuest?: (minionId: string) => void;
+  onMinionDetails?: (minionId: string) => void;
   onBuildingStatus?: (buildingId: string) => void;
   onBuildingWorkers?: (buildingId: string) => void;
   onBuildingAesthetic?: (buildingId: string) => void;
@@ -41,8 +42,10 @@ export class StaffInteractionController {
   private foundationDrawer: FoundationDrawer;
   private staffBeam: StaffBeam;
 
-  private camera: THREE.PerspectiveCamera;
+  private camera: THREE.Camera;
+  private orthoCamera: THREE.OrthographicCamera | null = null;
   private scene: THREE.Scene;
+  private isIsometricMode: boolean = false;
 
   private state: InteractionState = {
     mode: 'idle',
@@ -72,13 +75,22 @@ export class StaffInteractionController {
   // Callbacks
   private callbacks: StaffInteractionCallbacks = {};
 
-  constructor(camera: THREE.PerspectiveCamera, scene: THREE.Scene) {
+  // Wizard position getter for isometric mode force grab
+  private getWizardPosition: (() => THREE.Vector3) | null = null;
+
+  // Screen dimensions for raycast calculation
+  private screenWidth: number = window.innerWidth;
+  private screenHeight: number = window.innerHeight;
+
+  constructor(camera: THREE.Camera, scene: THREE.Scene) {
     this.camera = camera;
     this.scene = scene;
 
     this.targetingSystem = new TargetingSystem(camera);
     this.forceGrabController = new ForceGrabController();
-    this.forceGrabController.setCamera(camera);
+    if (camera instanceof THREE.PerspectiveCamera) {
+      this.forceGrabController.setCamera(camera);
+    }
     this.foundationDrawer = new FoundationDrawer();
     this.staffBeam = new StaffBeam();
 
@@ -90,10 +102,49 @@ export class StaffInteractionController {
     this.callbacks = { ...this.callbacks, ...callbacks };
   }
 
-  setCamera(camera: THREE.PerspectiveCamera): void {
+  setCamera(camera: THREE.Camera): void {
     this.camera = camera;
     this.targetingSystem.setCamera(camera);
-    this.forceGrabController.setCamera(camera);
+    if (camera instanceof THREE.PerspectiveCamera) {
+      this.forceGrabController.setCamera(camera);
+    }
+  }
+
+  /**
+   * Set orthographic camera for isometric mode
+   */
+  setOrthoCamera(camera: THREE.OrthographicCamera): void {
+    this.orthoCamera = camera;
+  }
+
+  /**
+   * Enable/disable isometric mode
+   */
+  setIsometricMode(isometric: boolean): void {
+    this.isIsometricMode = isometric;
+    this.targetingSystem.setUseMouseRaycast(isometric);
+    this.forceGrabController.setIsometricMode(isometric);
+    if (isometric && this.orthoCamera) {
+      this.targetingSystem.setCamera(this.orthoCamera);
+    } else {
+      this.targetingSystem.setCamera(this.camera);
+    }
+  }
+
+  /**
+   * Set wizard position getter for isometric mode force grab
+   */
+  setWizardPositionGetter(getter: () => THREE.Vector3): void {
+    this.getWizardPosition = getter;
+    this.forceGrabController.setWizardPositionGetter(getter);
+  }
+
+  /**
+   * Set screen dimensions for raycast calculation
+   */
+  setScreenDimensions(width: number, height: number): void {
+    this.screenWidth = width;
+    this.screenHeight = height;
   }
 
   setHeightFunction(fn: (x: number, z: number) => number): void {
@@ -129,7 +180,23 @@ export class StaffInteractionController {
 
     if (this.state.mode === 'grabbing') {
       // Throw the grabbed entity with ruthless force
-      const thrown = this.forceGrabController.throw();
+      let targetPosition: THREE.Vector3 | undefined;
+
+      if (this.isIsometricMode) {
+        // In isometric mode, raycast to get throw target position
+        this.targetingSystem.setMousePosition(
+          event.clientX,
+          event.clientY,
+          this.screenWidth,
+          this.screenHeight
+        );
+        const target = this.targetingSystem.update();
+        if (target) {
+          targetPosition = target.position;
+        }
+      }
+
+      const thrown = this.forceGrabController.throw(targetPosition);
       if (thrown) {
         this.callbacks.onEntityThrown?.(thrown);
       }
@@ -153,6 +220,16 @@ export class StaffInteractionController {
 
     // Start hold detection
     this.state.holdStartTime = Date.now();
+
+    // Update mouse position for targeting in isometric mode
+    if (this.isIsometricMode) {
+      this.targetingSystem.setMousePosition(
+        event.clientX,
+        event.clientY,
+        this.screenWidth,
+        this.screenHeight
+      );
+    }
 
     // Update targeting
     const target = this.targetingSystem.update();
@@ -190,6 +267,16 @@ export class StaffInteractionController {
   handleMouseMove(event: MouseEvent): void {
     this.cursorPosition = { x: event.clientX, y: event.clientY };
 
+    // Update targeting system mouse position for isometric mode
+    if (this.isIsometricMode) {
+      this.targetingSystem.setMousePosition(
+        event.clientX,
+        event.clientY,
+        this.screenWidth,
+        this.screenHeight
+      );
+    }
+
     // Accumulate delta for look-to-select when menu is open
     if (this.state.mode === 'menu') {
       // Use movementX/Y for pointer lock delta, or calculate from position change
@@ -221,14 +308,18 @@ export class StaffInteractionController {
 
   // Update loop (call in animation frame)
   update(deltaTime: number): void {
-    // Always update targeting (for highlight effect)
-    const target = this.targetingSystem.update();
-    this.state.target = target;
+    // Only update targeting continuously in first-person mode (for highlight effect)
+    // In isometric mode, targeting is done on-demand in handleMouseDown
+    if (!this.isIsometricMode) {
+      const target = this.targetingSystem.update();
+      this.state.target = target;
+    }
+    // Note: In isometric mode, targeting is NOT updated here - only on mousedown
 
     // Check for hold -> menu transition
     if (this.state.mode === 'aiming' && this.state.holdStartTime) {
       const holdDuration = Date.now() - this.state.holdStartTime;
-      if (holdDuration >= this.holdThreshold && target && target.type !== 'none') {
+      if (holdDuration >= this.holdThreshold && this.state.target && this.state.target.type !== 'none') {
         this.setMode('menu');
         this.state.holdStartTime = null;
       }
@@ -236,7 +327,12 @@ export class StaffInteractionController {
 
     // Update force grab
     if (this.state.mode === 'grabbing') {
-      this.forceGrabController.updateTargetFromCamera(this.camera);
+      // Update target based on mode
+      if (this.isIsometricMode) {
+        this.forceGrabController.updateTargetForIsometric();
+      } else {
+        this.forceGrabController.updateTargetFromCamera(this.camera as THREE.PerspectiveCamera);
+      }
       this.forceGrabController.update(deltaTime);
 
       // Update beam to grabbed entity
@@ -248,9 +344,9 @@ export class StaffInteractionController {
     }
 
     // Update beam for aiming
-    if (this.state.mode === 'aiming' && target) {
+    if (this.state.mode === 'aiming' && this.state.target) {
       const staffPos = this.getStaffGemPosition();
-      this.staffBeam.setEndpoints(staffPos, target.position);
+      this.staffBeam.setEndpoints(staffPos, this.state.target.position);
       this.staffBeam.setVisible(true);
     } else if (this.state.mode !== 'grabbing' && this.state.mode !== 'drawing') {
       this.staffBeam.setVisible(false);
@@ -352,6 +448,12 @@ export class StaffInteractionController {
           this.state.grabbedEntityId = target.id;
           this.setMode('grabbing');
           return; // Don't set to idle
+        }
+        break;
+
+      case 'details':
+        if (target?.type === 'minion' && target.id) {
+          this.callbacks.onMinionDetails?.(target.id);
         }
         break;
 

@@ -30,12 +30,13 @@ export function GameLayout() {
   const exitConversation = useGameStore((state) => state.exitConversation);
   const cameraMode = useGameStore((state) => state.cameraMode);
 
-  // Interaction state for first person mode
+  // Interaction state for first person mode and isometric mode
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('idle');
   const [menuOptions, setMenuOptions] = useState<MenuOption[] | null>(null);
   const [showQuickInfo, setShowQuickInfo] = useState(false);
   const [selectionDelta, setSelectionDelta] = useState({ x: 0, y: 0 });
   const [interactionTarget, setInteractionTarget] = useState<Target | null>(null);
+  const [menuScreenPosition, setMenuScreenPosition] = useState<{ x: number; y: number } | null>(null);
 
   // Ref to store interaction controller execute function
   const interactionExecuteRef = useRef<((actionId: string) => void) | null>(null);
@@ -94,6 +95,7 @@ export function GameLayout() {
           onQuickInfoChange={setShowQuickInfo}
           onSelectionDeltaChange={setSelectionDelta}
           onTargetChange={setInteractionTarget}
+          onMenuScreenPositionChange={setMenuScreenPosition}
           onFoundationComplete={(foundation) => {
             console.log('Foundation complete:', foundation);
             // TODO: Open building project creation dialog
@@ -349,14 +351,15 @@ export function GameLayout() {
       {/* First person mode HUD */}
       <FirstPersonHUD visible={inFirstPerson} />
 
-      {/* Interaction HUD (radial menu, quick info) for first person */}
+      {/* Interaction HUD (radial menu, quick info) for first person and isometric */}
       <InteractionHUD
-        visible={inFirstPerson}
+        visible={inFirstPerson || (cameraMode === 'isometric' && interactionMode !== 'idle')}
         mode={interactionMode}
         target={interactionTarget}
         menuOptions={menuOptions}
         selectionDelta={selectionDelta}
         showQuickInfo={showQuickInfo}
+        menuScreenPosition={cameraMode === 'isometric' ? menuScreenPosition : null}
         onMenuSelect={(option) => {
           interactionExecuteRef.current?.(option.id);
         }}

@@ -111,6 +111,7 @@ interface SimpleSceneProps {
   onSelectionDeltaChange?: (delta: { x: number; y: number }) => void;
   onTargetChange?: (target: import('@/types/interaction').Target | null) => void;
   onInteractionControllerReady?: (executeAction: (actionId: string) => void) => void;
+  onMenuScreenPositionChange?: (position: { x: number; y: number } | null) => void;
 }
 
 export function SimpleScene({
@@ -124,6 +125,7 @@ export function SimpleScene({
   onSelectionDeltaChange,
   onTargetChange,
   onInteractionControllerReady,
+  onMenuScreenPositionChange,
 }: SimpleSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -157,6 +159,9 @@ export function SimpleScene({
   const isFirstPersonRef = useRef<boolean>(false);
   const lastDeltaUpdateRef = useRef<number>(0);
   const thrownMinionsRef = useRef<Map<string, ThrownMinionState>>(new Map());
+  // Isometric mode interaction tracking
+  const isometricHoldStartRef = useRef<number | null>(null);
+  const isometricMousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Ref for stable click handler - avoids effect re-runs when dependencies change
   const handleClickRef = useRef<((event: MouseEvent) => void) | null>(null);
@@ -174,9 +179,16 @@ export function SimpleScene({
   // Project store
   const { projects, scanProjects } = useProjectStore();
 
-  // Handle click on canvas
+  // Handle click on canvas - only for conversation mode minion switching
+  // Isometric mode clicks are handled by the interaction system (radial menu)
   const handleClick = useCallback((event: MouseEvent) => {
     if (!containerRef.current || !sceneRef.current) return;
+
+    // In isometric mode (not in conversation), let the interaction system handle clicks
+    const store = useGameStore.getState();
+    if (!store.conversation.active && store.cameraMode === 'isometric') {
+      return; // Let isometric interaction handlers handle this
+    }
 
     // Use the camera controller's active camera for raycasting
     const camera = cameraControllerRef.current?.getCamera() || cameraRef.current;
@@ -468,7 +480,54 @@ export function SimpleScene({
     controls.maxPolarAngle = CAMERA_POLAR_ANGLE;
     controls.minZoom = 0.5;
     controls.maxZoom = 2.5;
+
+    // Disable left-click drag rotation - we use that for interaction now
+    // Use two-finger scroll/swipe for rotation instead
+    controls.mouseButtons.LEFT = -1 as THREE.MOUSE; // Disable left button
+    controls.mouseButtons.RIGHT = THREE.MOUSE.PAN; // Keep right-click for panning
+    controls.enableZoom = false; // Disable default scroll zoom, we'll handle rotation manually
+
     controlsRef.current = controls;
+
+    // Custom wheel handler for two-finger rotation
+    const handleWheel = (event: WheelEvent) => {
+      if (!controlsRef.current?.enabled) return;
+
+      // Prevent default zoom behavior
+      event.preventDefault();
+
+      // Use horizontal scroll (deltaX) for rotation, vertical (deltaY) for zoom
+      const rotationSpeed = 0.003;
+      const zoomSpeed = 0.001;
+
+      // Horizontal swipe = rotate camera around target
+      if (Math.abs(event.deltaX) > 0) {
+        const azimuthAngle = controlsRef.current.getAzimuthalAngle();
+        controlsRef.current.minAzimuthAngle = -Infinity;
+        controlsRef.current.maxAzimuthAngle = Infinity;
+        // Rotate by adjusting the camera position around the target
+        const newAngle = azimuthAngle + event.deltaX * rotationSpeed;
+        const distance = cameraRef.current!.position.distanceTo(controlsRef.current.target);
+        const height = cameraRef.current!.position.y - controlsRef.current.target.y;
+        const horizontalDist = Math.sqrt(distance * distance - height * height);
+        cameraRef.current!.position.x = controlsRef.current.target.x + Math.sin(newAngle) * horizontalDist;
+        cameraRef.current!.position.z = controlsRef.current.target.z + Math.cos(newAngle) * horizontalDist;
+        cameraRef.current!.lookAt(controlsRef.current.target);
+      }
+
+      // Vertical scroll = zoom
+      if (Math.abs(event.deltaY) > 0) {
+        const zoomDelta = event.deltaY * zoomSpeed;
+        const newZoom = THREE.MathUtils.clamp(
+          cameraRef.current!.zoom - zoomDelta,
+          controls.minZoom,
+          controls.maxZoom
+        );
+        cameraRef.current!.zoom = newZoom;
+        cameraRef.current!.updateProjectionMatrix();
+      }
+    };
+    renderer.domElement.addEventListener('wheel', handleWheel, { passive: false });
 
     // === COZY COTTAGE (single larger room) ===
     // Generate a single cozy cottage instead of multi-room compound
@@ -844,13 +903,24 @@ export function SimpleScene({
     scene.add(magicCircle.getMesh());
     magicCircleRef.current = magicCircle;
 
-    // === STAFF INTERACTION CONTROLLER (for first person force grab) ===
+    // === STAFF INTERACTION CONTROLLER (for first person and isometric interactions) ===
     const interactionController = new StaffInteractionController(perspCamera, scene);
     interactionControllerRef.current = interactionController;
 
     // Set up ground mesh for targeting and height function for foundation drawing
     interactionController.setGroundMesh(terrain);
     interactionController.setHeightFunction((x, z) => terrainBuilder.getHeightAt(x, z));
+
+    // Set up isometric mode support
+    interactionController.setOrthoCamera(camera);
+    interactionController.setIsometricMode(true); // Start in isometric mode
+    interactionController.setScreenDimensions(container.clientWidth, container.clientHeight);
+    interactionController.setWizardPositionGetter(() => {
+      if (wizardRef.current) {
+        return wizardRef.current.mesh.position.clone();
+      }
+      return new THREE.Vector3(0, 0, 0);
+    });
 
     // Set up interaction callbacks
     interactionController.setCallbacks({
@@ -864,6 +934,11 @@ export function SimpleScene({
       },
       onMinionQuest: (minionId) => {
         // Open quest assignment for minion
+        setSelectedMinion(minionId);
+        onMinionClick?.(minionId);
+      },
+      onMinionDetails: (minionId) => {
+        // Open minion panel for details
         setSelectedMinion(minionId);
         onMinionClick?.(minionId);
       },
@@ -884,8 +959,12 @@ export function SimpleScene({
         // Update menu options when mode changes
         if (mode === 'menu') {
           onMenuOptionsChange?.(interactionController.getMenuOptions());
+          // Pass the cursor position for menu positioning in isometric mode
+          const cursorPos = interactionController.getCursorPosition();
+          onMenuScreenPositionChange?.(cursorPos);
         } else {
           onMenuOptionsChange?.(null);
+          onMenuScreenPositionChange?.(null);
         }
       },
       onStaffStateChange: (state) => {
@@ -1005,6 +1084,57 @@ export function SimpleScene({
       onQuickInfoChange?.(showQuickInfo);
     }
 
+    // === ISOMETRIC MODE INTERACTION HANDLERS ===
+    function handleIsometricMouseDown(event: MouseEvent) {
+      if (event.button !== 0) return; // Only left click
+      if (isFirstPersonRef.current) return; // Not in isometric mode
+      const conversation = useGameStore.getState().conversation;
+      if (conversation.active) return; // Don't interact during conversation
+
+      // Store mouse position for menu positioning
+      isometricMousePosRef.current = { x: event.clientX, y: event.clientY };
+      isometricHoldStartRef.current = Date.now();
+
+      // Forward to interaction controller
+      interactionControllerRef.current?.handleMouseDown(event);
+    }
+
+    function handleIsometricMouseUp(event: MouseEvent) {
+      if (event.button !== 0) return;
+      if (isFirstPersonRef.current) return;
+
+      // Forward to interaction controller
+      interactionControllerRef.current?.handleMouseUp(event);
+
+      // Check if quick info should be shown
+      const showQuickInfo = interactionControllerRef.current?.shouldShowQuickInfo() ?? false;
+      onQuickInfoChange?.(showQuickInfo);
+
+      // Clear hold tracking
+      isometricHoldStartRef.current = null;
+    }
+
+    function handleIsometricMouseMove(event: MouseEvent) {
+      if (isFirstPersonRef.current) return;
+
+      // Forward to interaction controller for targeting updates
+      interactionControllerRef.current?.handleMouseMove(event);
+
+      // Handle look-to-select delta for radial menu in isometric mode
+      const interactionMode = interactionControllerRef.current?.getMode();
+      if (interactionMode === 'menu') {
+        // Throttle React updates to every 50ms to avoid lag
+        const now = performance.now();
+        if (now - lastDeltaUpdateRef.current > 50) {
+          lastDeltaUpdateRef.current = now;
+          const delta = interactionControllerRef.current?.getSelectionDelta();
+          if (delta) {
+            onSelectionDeltaChange?.(delta);
+          }
+        }
+      }
+    }
+
     function handlePointerLockChange() {
       if (document.pointerLockElement !== renderer.domElement && isFirstPersonRef.current) {
         // Pointer lock was released while in first person - exit first person mode
@@ -1029,6 +1159,9 @@ export function SimpleScene({
 
       // Update store camera mode
       useGameStore.getState().setCameraMode('firstPerson');
+
+      // Switch interaction controller to first person mode
+      interactionControllerRef.current?.setIsometricMode(false);
 
       // Hide wizard mesh (we're now the wizard)
       wizard.mesh.visible = false;
@@ -1083,6 +1216,9 @@ export function SimpleScene({
       cameraController.exitFirstPerson();
       isFirstPersonRef.current = false;
 
+      // Switch interaction controller back to isometric mode
+      interactionControllerRef.current?.setIsometricMode(true);
+
       // === RESTORE ISOMETRIC QUALITY ===
       // Restore shadow quality
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -1101,6 +1237,10 @@ export function SimpleScene({
     document.addEventListener('mousedown', handleFirstPersonMouseDown);
     document.addEventListener('mouseup', handleFirstPersonMouseUp);
     document.addEventListener('pointerlockchange', handlePointerLockChange);
+    // Isometric mode event listeners (on canvas only)
+    renderer.domElement.addEventListener('mousedown', handleIsometricMouseDown);
+    renderer.domElement.addEventListener('mouseup', handleIsometricMouseUp);
+    renderer.domElement.addEventListener('mousemove', handleIsometricMouseMove);
 
     // Helper function to check if position is inside building
     function isInsideBuilding(x: number, z: number): boolean {
@@ -1351,6 +1491,21 @@ export function SimpleScene({
         // Skip wizard wandering updates when in first person
         wizardIsInside = false; // Don't affect wall culling
       } else {
+        // Update interaction controller in isometric mode
+        if (interactionControllerRef.current) {
+          interactionControllerRef.current.update(deltaTime);
+
+          // Update quick info visibility
+          const showQuickInfo = interactionControllerRef.current.shouldShowQuickInfo();
+          const target = interactionControllerRef.current.getCurrentTarget();
+          if (showQuickInfo && target) {
+            onQuickInfoChange?.(true);
+          }
+
+          // Notify parent of target changes
+          onTargetChange?.(target);
+        }
+
         // Update wizard wandering behavior (only when not in first person)
         const wizardMovement = wizardBehavior.update(
           deltaTime,
@@ -1665,7 +1820,11 @@ export function SimpleScene({
       cameraController.update(deltaTime);
 
       // Handle controls based on camera mode
-      if (cameraController.getMode() === 'isometric' && !cameraController.isTransitioning()) {
+      // Disable controls when radial menu is open to prevent camera rotation while selecting
+      const interactionMode = interactionControllerRef.current?.getMode();
+      const menuOpen = interactionMode === 'menu';
+
+      if (cameraController.getMode() === 'isometric' && !cameraController.isTransitioning() && !menuOpen) {
         // Clamp camera target to terrain bounds
         controls.target.x = THREE.MathUtils.clamp(controls.target.x, -WORLD_HALF_SIZE * 0.9, WORLD_HALF_SIZE * 0.9);
         controls.target.z = THREE.MathUtils.clamp(controls.target.z, -WORLD_HALF_SIZE * 0.9, WORLD_HALF_SIZE * 0.9);
@@ -1705,6 +1864,10 @@ export function SimpleScene({
       document.removeEventListener('mouseup', handleFirstPersonMouseUp);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
       renderer.domElement.removeEventListener('click', clickHandler);
+      renderer.domElement.removeEventListener('mousedown', handleIsometricMouseDown);
+      renderer.domElement.removeEventListener('mouseup', handleIsometricMouseUp);
+      renderer.domElement.removeEventListener('mousemove', handleIsometricMouseMove);
+      renderer.domElement.removeEventListener('wheel', handleWheel);
       controls.dispose();
       renderer.dispose();
       roomMeshBuilder.dispose();
