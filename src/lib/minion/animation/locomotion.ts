@@ -23,19 +23,19 @@ export class LocomotionUpdater implements AnimationUpdater {
 
     const walkCycle = state.animTime * 8 * walkSpeed;
 
-    // Body bounce
-    const bounce = Math.abs(Math.sin(walkCycle)) * 0.15 * bounceAmount;
+    // Body bounce (halved for smaller minion)
+    const bounce = Math.abs(Math.sin(walkCycle)) * 0.075 * bounceAmount;
 
-    // Body lean and sway
-    refs.body.rotation.z = Math.sin(walkCycle) * 0.08;
-    refs.body.rotation.x = 0.08; // Forward lean
+    // Body lean and sway (halved for smaller minion)
+    refs.body.rotation.z = Math.sin(walkCycle) * 0.04;
+    refs.body.rotation.x = 0.04; // Forward lean (halved)
 
     // Leg swing (opposite phases)
     refs.leftLeg.rotation.x = Math.sin(walkCycle + Math.PI) * 0.5 * legSwingAmount;
     refs.rightLeg.rotation.x = Math.sin(walkCycle) * 0.5 * legSwingAmount;
 
-    // Head bob
-    refs.head.rotation.z = Math.sin(walkCycle * 0.5) * 0.05;
+    // Head bob (halved for smaller minion)
+    refs.head.rotation.z = Math.sin(walkCycle * 0.5) * 0.025;
 
     // Store bounce for position calculation
     (refs.root as THREE.Group & { _bounce?: number })._bounce = bounce;
@@ -44,13 +44,13 @@ export class LocomotionUpdater implements AnimationUpdater {
   private updateIdle(ctx: AnimationContext): void {
     const { refs, state, modifiers } = ctx;
 
-    // Gentle body bob
-    const idleBob = Math.sin(state.animTime * 1.5) * 0.03;
+    // Gentle body bob (halved for smaller minion)
+    const idleBob = Math.sin(state.animTime * 1.5) * 0.015;
 
-    // Subtle body sway
+    // Subtle body sway (halved for smaller minion)
     refs.body.rotation.z = THREE.MathUtils.lerp(
       refs.body.rotation.z,
-      Math.sin(state.animTime * 0.8) * 0.02,
+      Math.sin(state.animTime * 0.8) * 0.01,
       0.1
     );
     refs.body.rotation.x = THREE.MathUtils.lerp(refs.body.rotation.x, 0, 0.1);
