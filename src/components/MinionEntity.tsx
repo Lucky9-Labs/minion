@@ -14,6 +14,9 @@ interface MinionEntityProps {
   minion: Minion;
 }
 
+// Minion scale factor - controls overall minion size (0.5 = half size)
+const MINION_SCALE = 0.5;
+
 // Goblin color palette
 const GOBLIN_COLORS = {
   skin: '#5a9c4e',
@@ -97,11 +100,11 @@ export function MinionEntity({ minion }: MinionEntityProps) {
   const animateIdle = useCallback((time: number) => {
     if (!groupRef.current) return;
 
-    // Gentle bobbing
-    groupRef.current.position.y = minion.position.y + Math.sin(time * 1.5) * 0.03;
+    // Gentle bobbing (halved for smaller minion)
+    groupRef.current.position.y = minion.position.y + Math.sin(time * 1.5) * 0.015;
 
-    // Subtle body sway
-    groupRef.current.rotation.z = Math.sin(time * 0.8) * 0.02;
+    // Subtle body sway (halved for smaller minion)
+    groupRef.current.rotation.z = Math.sin(time * 0.8) * 0.01;
 
     // Arms at rest, slight movement
     if (leftArmRef.current && rightArmRef.current) {
@@ -121,14 +124,14 @@ export function MinionEntity({ minion }: MinionEntityProps) {
   const animateTraveling = useCallback((time: number) => {
     if (!groupRef.current) return;
 
-    // Bouncy walking motion
+    // Bouncy walking motion (halved for smaller minion)
     const walkCycle = time * 8;
-    const bounce = Math.abs(Math.sin(walkCycle)) * 0.08;
+    const bounce = Math.abs(Math.sin(walkCycle)) * 0.04;
     groupRef.current.position.y = minion.position.y + bounce;
 
-    // Body lean while walking
-    groupRef.current.rotation.z = Math.sin(walkCycle) * 0.08;
-    groupRef.current.rotation.x = 0.1; // Slight forward lean
+    // Body lean while walking (halved for smaller minion)
+    groupRef.current.rotation.z = Math.sin(walkCycle) * 0.04;
+    groupRef.current.rotation.x = 0.05; // Slight forward lean (halved)
 
     // Arm swing
     if (leftArmRef.current && rightArmRef.current) {
@@ -148,8 +151,8 @@ export function MinionEntity({ minion }: MinionEntityProps) {
   const animateWorking = useCallback((time: number) => {
     if (!groupRef.current) return;
 
-    // Focused slight bobbing
-    groupRef.current.position.y = minion.position.y + Math.sin(time * 3) * 0.02;
+    // Focused slight bobbing (halved for smaller minion)
+    groupRef.current.position.y = minion.position.y + Math.sin(time * 3) * 0.01;
 
     // Arms doing work motion
     if (leftArmRef.current && rightArmRef.current) {
@@ -170,8 +173,8 @@ export function MinionEntity({ minion }: MinionEntityProps) {
   const animateStuck = useCallback((time: number) => {
     if (!groupRef.current) return;
 
-    // Frustrated shaking
-    groupRef.current.position.x = minion.position.x + Math.sin(time * 15) * 0.03;
+    // Frustrated shaking (halved for smaller minion)
+    groupRef.current.position.x = minion.position.x + Math.sin(time * 15) * 0.015;
     groupRef.current.position.y = minion.position.y;
 
     // Arms flailing in frustration
@@ -192,12 +195,12 @@ export function MinionEntity({ minion }: MinionEntityProps) {
   const animateReturning = useCallback((time: number) => {
     if (!groupRef.current) return;
 
-    // Happy bouncing
+    // Happy bouncing (halved for smaller minion)
     const bounceCycle = time * 6;
-    groupRef.current.position.y = minion.position.y + Math.abs(Math.sin(bounceCycle)) * 0.15;
+    groupRef.current.position.y = minion.position.y + Math.abs(Math.sin(bounceCycle)) * 0.075;
 
-    // Celebratory body motion
-    groupRef.current.rotation.z = Math.sin(bounceCycle * 0.5) * 0.1;
+    // Celebratory body motion (halved for smaller minion)
+    groupRef.current.rotation.z = Math.sin(bounceCycle * 0.5) * 0.05;
 
     // Arms up in triumph occasionally
     if (leftArmRef.current && rightArmRef.current) {
@@ -343,6 +346,7 @@ export function MinionEntity({ minion }: MinionEntityProps) {
     <group
       ref={groupRef}
       position={[minion.position.x, minion.position.y, minion.position.z]}
+      scale={MINION_SCALE}
       onClick={handleClick}
       onPointerEnter={() => setHovered(true)}
       onPointerLeave={() => setHovered(false)}

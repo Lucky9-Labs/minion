@@ -10,6 +10,9 @@ import type {
 import { getSpeciesBuilder } from './species';
 import { MinionAnimator } from './animation';
 
+// Minion scale factor - controls overall minion size (0.5 = half size)
+const MINION_SCALE = 0.5;
+
 /**
  * Options for creating a minion
  */
@@ -52,6 +55,9 @@ export function createMinion(options: CreateMinionOptions): MinionInstance {
 
   // Build the minion mesh
   const { mesh, refs } = builder.build(colors);
+
+  // Apply scale to shrink minions to half size
+  mesh.scale.setScalar(MINION_SCALE);
 
   // Create the animator
   const animator = new MinionAnimator(
