@@ -591,6 +591,13 @@ export class StaffInteractionController {
     return this.suspendedEntityId;
   }
 
+  /**
+   * Get the targeting system for access to highlighted mesh (used for outline rendering).
+   */
+  getTargetingSystem(): TargetingSystem {
+    return this.targetingSystem;
+  }
+
   dispose(): void {
     this.hideQuickInfo();
     this.targetingSystem.dispose();
