@@ -2,15 +2,30 @@ import * as THREE from 'three';
 import type { GridConfig, DrawnFoundation } from '@/types/interaction';
 import { DEFAULT_GRID_CONFIG } from '@/types/interaction';
 
+interface GridCell {
+  id: string;           // "cell_x_y"
+  x: number;            // Grid x coordinate
+  y: number;            // Grid z coordinate (world z)
+  worldPos: THREE.Vector3;
+  mesh: THREE.Mesh;
+}
+
 export class FoundationDrawer {
   private config: GridConfig;
-  private currentPath: THREE.Vector2[] = [];
+  private selectedCells: Set<string> = new Set();
+  private hoveredCell: string | null = null;
+  private dragStartCell: string | null = null;
+  private isDragging: boolean = false;
+  private drawStartPos: THREE.Vector3 = new THREE.Vector3();
   private group: THREE.Group;
   private gridHelper: THREE.GridHelper;
-  private pathLine: THREE.Line;
-  private pathLineMaterial: THREE.LineBasicMaterial;
-  private previewMesh: THREE.Mesh;
-  private isDrawing: boolean = false;
+  private cellMeshes: Map<string, GridCell> = new Map();
+  private isSelecting: boolean = false;
+
+  // Materials
+  private selectedCellMaterial: THREE.MeshBasicMaterial;
+  private hoveredCellMaterial: THREE.MeshBasicMaterial;
+  private defaultCellMaterial: THREE.MeshBasicMaterial;
 
   // Height map function for terrain following
   private getHeightAt: (x: number, z: number) => number;
@@ -20,170 +35,259 @@ export class FoundationDrawer {
     this.getHeightAt = getHeightAt || (() => 0);
     this.group = new THREE.Group();
 
-    // Create grid helper (shown while drawing)
+    // Create grid helper (shown while selecting)
     this.gridHelper = new THREE.GridHelper(
       this.config.maxSize * this.config.cellSize * 2,
-      this.config.maxSize * 2,
+      (this.config.maxSize * this.config.cellSize * 2) / this.config.cellSize,
       0x444444,
       0x222222
     );
     this.gridHelper.visible = false;
     this.group.add(this.gridHelper);
 
-    // Create path line for drawing visualization
-    const pathGeometry = new THREE.BufferGeometry();
-    this.pathLineMaterial = new THREE.LineBasicMaterial({
-      color: 0x66ccff,
-      linewidth: 3,
+    // Create materials for grid cells
+    this.selectedCellMaterial = new THREE.MeshBasicMaterial({
+      color: 0x8b5cf6,  // Purple - magical tone
       transparent: true,
-      opacity: 0.8,
-    });
-    this.pathLine = new THREE.Line(pathGeometry, this.pathLineMaterial);
-    this.pathLine.frustumCulled = false;
-    this.group.add(this.pathLine);
-
-    // Create preview mesh (semi-transparent fill)
-    const previewGeometry = new THREE.PlaneGeometry(1, 1);
-    const previewMaterial = new THREE.MeshBasicMaterial({
-      color: 0x66ccff,
-      transparent: true,
-      opacity: 0.2,
+      opacity: 0.4,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
-    this.previewMesh = new THREE.Mesh(previewGeometry, previewMaterial);
-    this.previewMesh.rotation.x = -Math.PI / 2;
-    this.previewMesh.visible = false;
-    this.group.add(this.previewMesh);
+
+    this.hoveredCellMaterial = new THREE.MeshBasicMaterial({
+      color: 0xa855f7,  // Lighter purple for hover
+      transparent: true,
+      opacity: 0.5,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
+    this.defaultCellMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
   }
 
   setHeightFunction(fn: (x: number, z: number) => number): void {
     this.getHeightAt = fn;
   }
 
-  private snapToGrid(position: THREE.Vector3): THREE.Vector2 {
-    return new THREE.Vector2(
-      Math.round(position.x / this.config.cellSize) * this.config.cellSize,
-      Math.round(position.z / this.config.cellSize) * this.config.cellSize
+  private snapToGrid(position: THREE.Vector3): { gridX: number; gridY: number } {
+    return {
+      gridX: Math.round(position.x / this.config.cellSize),
+      gridY: Math.round(position.z / this.config.cellSize),
+    };
+  }
+
+  private getCellId(gridX: number, gridY: number): string {
+    return `cell_${gridX}_${gridY}`;
+  }
+
+  private getWorldPosFromGrid(gridX: number, gridY: number): THREE.Vector3 {
+    const x = gridX * this.config.cellSize;
+    const z = gridY * this.config.cellSize;
+    const height = this.getHeightAt(x, z);
+    return new THREE.Vector3(x, height + 0.05, z);
+  }
+
+  private createGridCell(gridX: number, gridY: number): GridCell {
+    const cellId = this.getCellId(gridX, gridY);
+    const worldPos = this.getWorldPosFromGrid(gridX, gridY);
+
+    // Create plane geometry for the cell
+    const geometry = new THREE.PlaneGeometry(
+      this.config.cellSize * 0.95,
+      this.config.cellSize * 0.95
     );
+    const mesh = new THREE.Mesh(geometry, this.defaultCellMaterial);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.copy(worldPos);
+    mesh.userData.cellId = cellId;
+
+    this.group.add(mesh);
+
+    const cell: GridCell = {
+      id: cellId,
+      x: gridX,
+      y: gridY,
+      worldPos,
+      mesh,
+    };
+
+    this.cellMeshes.set(cellId, cell);
+    return cell;
+  }
+
+  private ensureGridCell(gridX: number, gridY: number): GridCell {
+    const cellId = this.getCellId(gridX, gridY);
+    if (this.cellMeshes.has(cellId)) {
+      return this.cellMeshes.get(cellId)!;
+    }
+    return this.createGridCell(gridX, gridY);
   }
 
   startDrawing(worldPosition: THREE.Vector3): void {
-    const snapped = this.snapToGrid(worldPosition);
-    this.currentPath = [snapped];
-    this.isDrawing = true;
+    this.drawStartPos = worldPosition.clone();
+    this.isSelecting = true;
 
     // Position grid helper at draw start
-    const height = this.getHeightAt(snapped.x, snapped.y);
-    this.gridHelper.position.set(snapped.x, height + 0.05, snapped.y);
+    const snapped = this.snapToGrid(worldPosition);
+    const cellPos = this.getWorldPosFromGrid(snapped.gridX, snapped.gridY);
+    this.gridHelper.position.copy(cellPos);
     this.gridHelper.visible = true;
 
-    this.updatePathLine();
+    // Create initial grid cells around the start position
+    this.createGridCellsAround(snapped.gridX, snapped.gridY, 15);
+
+    // Select the initial cell
+    const cellId = this.getCellId(snapped.gridX, snapped.gridY);
+    this.selectCell(cellId, true);
   }
 
-  updatePosition(worldPosition: THREE.Vector3): void {
-    if (!this.isDrawing) return;
+  private createGridCellsAround(gridX: number, gridY: number, radius: number): void {
+    for (let x = gridX - radius; x <= gridX + radius; x++) {
+      for (let y = gridY - radius; y <= gridY + radius; y++) {
+        this.ensureGridCell(x, y);
+      }
+    }
+  }
 
+  getCellAtWorldPosition(worldPosition: THREE.Vector3): string | null {
     const snapped = this.snapToGrid(worldPosition);
+    const cellId = this.getCellId(snapped.gridX, snapped.gridY);
 
-    // Only add if different from last point
-    const lastPoint = this.currentPath[this.currentPath.length - 1];
-    if (!lastPoint || snapped.distanceTo(lastPoint) >= this.config.cellSize * 0.9) {
-      // Check if we're closing the path
-      if (this.currentPath.length >= 3) {
-        const startPoint = this.currentPath[0];
-        if (snapped.distanceTo(startPoint) < this.config.snapThreshold) {
-          // Snap to start point to close
-          this.currentPath.push(startPoint.clone());
-          this.updatePathLine();
-          return;
-        }
-      }
+    // Ensure cell exists so it can be found
+    this.ensureGridCell(snapped.gridX, snapped.gridY);
 
-      // Check max size constraint
-      if (this.currentPath.length < this.config.maxSize * 4) {
-        this.currentPath.push(snapped);
-        this.updatePathLine();
-      }
-    }
+    return cellId;
   }
 
-  private updatePathLine(): void {
-    if (this.currentPath.length < 2) {
-      this.pathLine.visible = false;
-      this.previewMesh.visible = false;
-      return;
-    }
+  private selectCell(cellId: string, isSelected: boolean): void {
+    const cell = this.cellMeshes.get(cellId);
+    if (!cell) return;
 
-    // Create 3D positions from 2D path
-    const positions: number[] = [];
-    for (const point of this.currentPath) {
-      const height = this.getHeightAt(point.x, point.y) + 0.1;
-      positions.push(point.x, height, point.y);
-    }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-
-    this.pathLine.geometry.dispose();
-    this.pathLine.geometry = geometry;
-    this.pathLine.visible = true;
-
-    // Update color based on validity
-    if (this.isPathClosed()) {
-      this.pathLineMaterial.color.setHex(0x00ff88); // Green when closed
-      this.updatePreviewMesh();
-    } else if (this.currentPath.length >= this.config.minSize) {
-      this.pathLineMaterial.color.setHex(0xffcc00); // Yellow when can close
+    if (isSelected) {
+      this.selectedCells.add(cellId);
+      cell.mesh.material = this.selectedCellMaterial;
     } else {
-      this.pathLineMaterial.color.setHex(0x66ccff); // Blue while drawing
+      this.selectedCells.delete(cellId);
+      cell.mesh.material = this.defaultCellMaterial;
     }
   }
 
-  private updatePreviewMesh(): void {
-    if (!this.isPathClosed() || this.currentPath.length < 4) {
-      this.previewMesh.visible = false;
-      return;
+  private setHoveredCell(cellId: string | null): void {
+    // Clear previous hover
+    if (this.hoveredCell && !this.selectedCells.has(this.hoveredCell)) {
+      const prevCell = this.cellMeshes.get(this.hoveredCell);
+      if (prevCell) {
+        prevCell.mesh.material = this.defaultCellMaterial;
+      }
     }
 
-    // Calculate bounds
-    const bounds = this.calculateBounds();
-    const width = bounds.max.x - bounds.min.x;
-    const depth = bounds.max.y - bounds.min.y;
-    const centerX = (bounds.min.x + bounds.max.x) / 2;
-    const centerZ = (bounds.min.y + bounds.max.y) / 2;
-    const height = this.getHeightAt(centerX, centerZ) + 0.05;
+    this.hoveredCell = cellId;
 
-    this.previewMesh.position.set(centerX, height, centerZ);
-    this.previewMesh.scale.set(width, depth, 1);
-    this.previewMesh.visible = true;
+    // Set new hover if not already selected
+    if (cellId && !this.selectedCells.has(cellId)) {
+      const cell = this.cellMeshes.get(cellId);
+      if (cell) {
+        cell.mesh.material = this.hoveredCellMaterial;
+      }
+    }
   }
 
-  private calculateBounds(): { min: THREE.Vector2; max: THREE.Vector2 } {
-    const min = new THREE.Vector2(Infinity, Infinity);
-    const max = new THREE.Vector2(-Infinity, -Infinity);
+  private selectCellsByDrag(startCellId: string, endCellId: string): void {
+    const startCell = this.cellMeshes.get(startCellId);
+    const endCell = this.cellMeshes.get(endCellId);
+    if (!startCell || !endCell) return;
 
-    for (const point of this.currentPath) {
-      min.x = Math.min(min.x, point.x);
-      min.y = Math.min(min.y, point.y);
-      max.x = Math.max(max.x, point.x);
-      max.y = Math.max(max.y, point.y);
+    // Create a line and select all cells near it (free-form drag)
+    const startGrid = { x: startCell.x, y: startCell.y };
+    const endGrid = { x: endCell.x, y: endCell.y };
+
+    // Use Bresenham-like algorithm to select cells along the drag path
+    const cellsOnPath = this.getCellsOnPath(startGrid, endGrid);
+    for (const cellId of cellsOnPath) {
+      this.selectCell(cellId, true);
+    }
+  }
+
+  private getCellsOnPath(
+    start: { x: number; y: number },
+    end: { x: number; y: number }
+  ): string[] {
+    const cells: string[] = [];
+    const dx = Math.abs(end.x - start.x);
+    const dy = Math.abs(end.y - start.y);
+    const sx = start.x < end.x ? 1 : -1;
+    const sy = start.y < end.y ? 1 : -1;
+    let err = dx - dy;
+
+    let x = start.x;
+    let y = start.y;
+
+    while (true) {
+      cells.push(this.getCellId(x, y));
+
+      if (x === end.x && y === end.y) break;
+
+      const e2 = 2 * err;
+      if (e2 > -dy) {
+        err -= dy;
+        x += sx;
+      }
+      if (e2 < dx) {
+        err += dx;
+        y += sy;
+      }
     }
 
-    return { min, max };
+    return cells;
   }
 
-  isPathClosed(): boolean {
-    if (this.currentPath.length < 4) return false;
+  updatePosition(worldPosition: THREE.Vector3, isShiftHeld: boolean = false): void {
+    if (!this.isSelecting) return;
 
-    const start = this.currentPath[0];
-    const end = this.currentPath[this.currentPath.length - 1];
+    const cellId = this.getCellAtWorldPosition(worldPosition);
+    if (!cellId) return;
 
-    return start.distanceTo(end) < this.config.snapThreshold;
+    // Hover feedback
+    this.setHoveredCell(cellId);
+
+    // If dragging, select cells along the path
+    if (this.isDragging && this.dragStartCell && cellId !== this.dragStartCell) {
+      this.selectCellsByDrag(this.dragStartCell, cellId);
+    }
+  }
+
+  handleMouseDown(worldPosition: THREE.Vector3, isShiftHeld: boolean = false): void {
+    if (!this.isSelecting) return;
+
+    const cellId = this.getCellAtWorldPosition(worldPosition);
+    if (!cellId) return;
+
+    this.dragStartCell = cellId;
+    this.isDragging = true;
+
+    // Toggle selection if shift held, otherwise start drag
+    if (isShiftHeld) {
+      const isCurrentlySelected = this.selectedCells.has(cellId);
+      this.selectCell(cellId, !isCurrentlySelected);
+    } else if (!this.selectedCells.has(cellId)) {
+      // Toggle cell under cursor
+      this.selectCell(cellId, true);
+    }
+  }
+
+  handleMouseUp(worldPosition: THREE.Vector3): void {
+    this.isDragging = false;
+    this.dragStartCell = null;
   }
 
   canComplete(): boolean {
-    return this.isPathClosed() && this.currentPath.length >= this.config.minSize;
+    return this.selectedCells.size >= this.config.minSize;
   }
 
   finishDrawing(): DrawnFoundation | null {
@@ -192,16 +296,41 @@ export class FoundationDrawer {
       return null;
     }
 
-    const bounds = this.calculateBounds();
-    const centerX = (bounds.min.x + bounds.max.x) / 2;
-    const centerZ = (bounds.min.y + bounds.max.y) / 2;
+    // Calculate bounds from selected cells
+    let minGridX = Infinity;
+    let maxGridX = -Infinity;
+    let minGridY = Infinity;
+    let maxGridY = -Infinity;
+
+    for (const cellId of this.selectedCells) {
+      const cell = this.cellMeshes.get(cellId);
+      if (cell) {
+        minGridX = Math.min(minGridX, cell.x);
+        maxGridX = Math.max(maxGridX, cell.x);
+        minGridY = Math.min(minGridY, cell.y);
+        maxGridY = Math.max(maxGridY, cell.y);
+      }
+    }
+
+    // Calculate world bounds
+    const minX = minGridX * this.config.cellSize;
+    const maxX = (maxGridX + 1) * this.config.cellSize;
+    const minY = minGridY * this.config.cellSize;
+    const maxY = (maxGridY + 1) * this.config.cellSize;
+
+    const centerX = (minX + maxX) / 2;
+    const centerZ = (minY + maxY) / 2;
     const height = this.getHeightAt(centerX, centerZ);
 
     const foundation: DrawnFoundation = {
-      cells: [...this.currentPath],
-      bounds,
+      cells: new Set(this.selectedCells),
+      cellSize: this.config.cellSize,
+      bounds: {
+        min: new THREE.Vector2(minX, minY),
+        max: new THREE.Vector2(maxX, maxY),
+      },
       center: new THREE.Vector3(centerX, height, centerZ),
-      area: (bounds.max.x - bounds.min.x) * (bounds.max.y - bounds.min.y),
+      area: this.selectedCells.size,
       isComplete: true,
     };
 
@@ -210,19 +339,25 @@ export class FoundationDrawer {
   }
 
   cancelDrawing(): void {
-    this.currentPath = [];
-    this.isDrawing = false;
+    this.selectedCells.clear();
+    this.hoveredCell = null;
+    this.dragStartCell = null;
+    this.isDragging = false;
+    this.isSelecting = false;
     this.gridHelper.visible = false;
-    this.pathLine.visible = false;
-    this.previewMesh.visible = false;
+
+    // Reset all cell materials
+    for (const cell of this.cellMeshes.values()) {
+      cell.mesh.material = this.defaultCellMaterial;
+    }
   }
 
   isActive(): boolean {
-    return this.isDrawing;
+    return this.isSelecting;
   }
 
   getCellCount(): number {
-    return this.currentPath.length;
+    return this.selectedCells.size;
   }
 
   getGroup(): THREE.Group {
@@ -232,9 +367,17 @@ export class FoundationDrawer {
   dispose(): void {
     this.gridHelper.geometry.dispose();
     (this.gridHelper.material as THREE.Material).dispose();
-    this.pathLine.geometry.dispose();
-    this.pathLineMaterial.dispose();
-    this.previewMesh.geometry.dispose();
-    (this.previewMesh.material as THREE.Material).dispose();
+
+    // Dispose all cell meshes
+    for (const cell of this.cellMeshes.values()) {
+      cell.mesh.geometry.dispose();
+    }
+
+    // Dispose materials
+    this.selectedCellMaterial.dispose();
+    this.hoveredCellMaterial.dispose();
+    this.defaultCellMaterial.dispose();
+
+    this.cellMeshes.clear();
   }
 }

@@ -996,6 +996,12 @@ export function SimpleScene({
 
     // Toggle first person mode with Tab key
     function handleKeyDown(event: KeyboardEvent) {
+      // Grid selection mode: Enter to finalize, Escape to cancel
+      if (interactionControllerRef.current?.getMode() === 'drawing') {
+        interactionControllerRef.current.handleKeyDown(event);
+        return;
+      }
+
       // Toggle first person mode
       if (event.code === 'Tab') {
         event.preventDefault();
@@ -1088,21 +1094,27 @@ export function SimpleScene({
 
     // === ISOMETRIC MODE INTERACTION HANDLERS ===
     function handleIsometricMouseDown(event: MouseEvent) {
-      if (event.button !== 0) return; // Only left click
+      // Allow left click (0) and right click (2) for grid selection cancellation
+      if (event.button !== 0 && event.button !== 2) return;
       if (isFirstPersonRef.current) return; // Not in isometric mode
+
+      // Allow right-click in drawing mode even during conversation
       const conversation = useGameStore.getState().conversation;
-      if (conversation.active) return; // Don't interact during conversation
+      const isDrawing = interactionControllerRef.current?.getMode() === 'drawing';
+      if (conversation.active && !isDrawing) return; // Don't interact during conversation unless drawing
 
-      // Store mouse position for menu positioning
-      isometricMousePosRef.current = { x: event.clientX, y: event.clientY };
-      isometricHoldStartRef.current = Date.now();
+      // Only store mouse position and hold start for left click
+      if (event.button === 0) {
+        isometricMousePosRef.current = { x: event.clientX, y: event.clientY };
+        isometricHoldStartRef.current = Date.now();
+      }
 
-      // Forward to interaction controller
+      // Forward to interaction controller (both left and right click)
       interactionControllerRef.current?.handleMouseDown(event);
     }
 
     function handleIsometricMouseUp(event: MouseEvent) {
-      if (event.button !== 0) return;
+      if (event.button !== 0 && event.button !== 2) return;
       if (isFirstPersonRef.current) return;
 
       // Forward to interaction controller
@@ -1238,6 +1250,13 @@ export function SimpleScene({
       useGameStore.getState().setCameraMode('isometric');
     }
 
+    // Prevent context menu during grid selection
+    function handleContextMenu(event: MouseEvent) {
+      if (interactionControllerRef.current?.getMode() === 'drawing') {
+        event.preventDefault();
+      }
+    }
+
     // Add event listeners
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
@@ -1245,6 +1264,7 @@ export function SimpleScene({
     document.addEventListener('mousedown', handleFirstPersonMouseDown);
     document.addEventListener('mouseup', handleFirstPersonMouseUp);
     document.addEventListener('pointerlockchange', handlePointerLockChange);
+    document.addEventListener('contextmenu', handleContextMenu);
     // Isometric mode event listeners (on canvas only)
     renderer.domElement.addEventListener('mousedown', handleIsometricMouseDown);
     renderer.domElement.addEventListener('mouseup', handleIsometricMouseUp);
@@ -2081,6 +2101,7 @@ export function SimpleScene({
       document.removeEventListener('mousedown', handleFirstPersonMouseDown);
       document.removeEventListener('mouseup', handleFirstPersonMouseUp);
       document.removeEventListener('pointerlockchange', handlePointerLockChange);
+      document.removeEventListener('contextmenu', handleContextMenu);
       renderer.domElement.removeEventListener('click', clickHandler);
       renderer.domElement.removeEventListener('mousedown', handleIsometricMouseDown);
       renderer.domElement.removeEventListener('mouseup', handleIsometricMouseUp);

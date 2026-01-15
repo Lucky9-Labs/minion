@@ -170,13 +170,22 @@ export class StaffInteractionController {
 
   // Input handlers
   handleMouseDown(event: MouseEvent): void {
-    if (event.button !== 0) return; // Only left click
-
     this.isMouseDown = true;
     this.cursorPosition = { x: event.clientX, y: event.clientY };
 
     // Clear any existing quick info
     this.hideQuickInfo();
+
+    // Right-click cancels drawing mode
+    if (event.button === 2) {
+      if (this.state.mode === 'drawing') {
+        this.foundationDrawer.cancelDrawing();
+        this.setMode('idle');
+      }
+      return;
+    }
+
+    if (event.button !== 0) return; // Only handle left click further
 
     if (this.state.mode === 'grabbing') {
       // Throw the grabbed entity with ruthless force
@@ -205,16 +214,13 @@ export class StaffInteractionController {
     }
 
     if (this.state.mode === 'drawing') {
-      // Check if we can complete the foundation
-      if (this.foundationDrawer.canComplete()) {
-        const foundation = this.foundationDrawer.finishDrawing();
-        if (foundation) {
-          this.callbacks.onFoundationComplete?.(foundation);
-        }
-      } else {
-        this.foundationDrawer.cancelDrawing();
+      // Update targeting to get ground position for grid selection
+      const target = this.targetingSystem.update();
+      if (target && target.type === 'ground') {
+        // Handle grid cell selection
+        const isShiftHeld = event.shiftKey;
+        this.foundationDrawer.handleMouseDown(target.position, isShiftHeld);
       }
-      this.setMode('idle');
       return;
     }
 
@@ -247,6 +253,22 @@ export class StaffInteractionController {
 
     if (this.state.mode === 'menu') {
       // Menu selection is handled by the RadialMenu component
+      return;
+    }
+
+    if (this.state.mode === 'drawing') {
+      // End drag selection and potentially complete drawing
+      const target = this.targetingSystem.getTarget();
+      if (target) {
+        this.foundationDrawer.handleMouseUp(target.position);
+      }
+
+      // Check if we can complete the foundation
+      if (this.foundationDrawer.canComplete()) {
+        // Foundation is ready to finalize
+        // Don't auto-complete here - let user finalize with a UI button or double-click
+        // For now, just show that selection is ready
+      }
       return;
     }
 
@@ -287,10 +309,11 @@ export class StaffInteractionController {
     }
 
     if (this.state.mode === 'drawing') {
-      // Update drawing position
+      // Update grid position during hover/drag
       const target = this.targetingSystem.getTarget();
       if (target && target.type === 'ground') {
-        this.foundationDrawer.updatePosition(target.position);
+        const isShiftHeld = event.shiftKey;
+        this.foundationDrawer.updatePosition(target.position, isShiftHeld);
       }
     }
   }
@@ -303,6 +326,22 @@ export class StaffInteractionController {
     if (this.state.mode === 'menu') {
       this.menuSelectionDelta.x += deltaX;
       this.menuSelectionDelta.y += deltaY;
+    }
+  }
+
+  // Keyboard handler for grid selection
+  handleKeyDown(event: KeyboardEvent): void {
+    if (this.state.mode === 'drawing') {
+      // Enter key to finalize selection
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        this.finalizeGridSelection();
+      }
+      // Escape key to cancel
+      else if (event.key === 'Escape') {
+        event.preventDefault();
+        this.cancel();
+      }
     }
   }
 
@@ -489,6 +528,20 @@ export class StaffInteractionController {
     }
 
     this.setMode('idle');
+  }
+
+  /**
+   * Finalize grid selection and proceed to minion picker
+   * Call this when user has selected zones and is ready to proceed
+   */
+  finalizeGridSelection(): void {
+    if (this.state.mode === 'drawing') {
+      const foundation = this.foundationDrawer.finishDrawing();
+      if (foundation) {
+        this.callbacks.onFoundationComplete?.(foundation);
+      }
+      this.setMode('idle');
+    }
   }
 
   // Cancel current interaction
