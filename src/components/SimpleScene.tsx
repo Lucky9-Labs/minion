@@ -14,7 +14,7 @@ import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
 import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
 import { CameraController } from '@/lib/camera';
-import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall } from '@/lib/effects';
+import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall, OutlineEffect } from '@/lib/effects';
 import type { ReactionType } from '@/lib/effects';
 import { IslandEdgeBuilder } from '@/lib/terrain';
 import { WizardBehavior } from '@/lib/wizard';
@@ -158,6 +158,7 @@ export function SimpleScene({
   const interactionControllerRef = useRef<StaffInteractionController | null>(null);
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
   const isFirstPersonRef = useRef<boolean>(false);
+  const outlineEffectRef = useRef<OutlineEffect | null>(null);
   const lastDeltaUpdateRef = useRef<number>(0);
   const thrownMinionsRef = useRef<Map<string, ThrownMinionState>>(new Map());
   // Isometric mode interaction tracking
@@ -1003,6 +1004,10 @@ export function SimpleScene({
       interactionController.executeAction(actionId);
     });
 
+    // === OUTLINE EFFECT FOR FIRST-PERSON INTERACTABLE HIGHLIGHTING ===
+    const outlineEffect = new OutlineEffect(renderer, scene, perspCamera);
+    outlineEffectRef.current = outlineEffect;
+
     // Add click listener - use wrapper to avoid effect re-runs when handleClick changes
     const clickHandler = (event: MouseEvent) => handleClickRef.current?.(event);
     renderer.domElement.addEventListener('click', clickHandler);
@@ -1498,6 +1503,17 @@ export function SimpleScene({
 
           // Notify parent of target changes
           onTargetChange?.(target);
+
+          // Update outline effect with highlighted mesh for first-person mode
+          if (outlineEffectRef.current) {
+            const highlightedMesh = interactionControllerRef.current.getTargetingSystem().getHighlightedMesh();
+            if (highlightedMesh) {
+              outlineEffectRef.current.setSelectedObjects([highlightedMesh]);
+            } else {
+              outlineEffectRef.current.clearSelection();
+            }
+            outlineEffectRef.current.update(deltaTime);
+          }
         }
 
         // Skip wizard wandering updates when in first person
@@ -1853,7 +1869,15 @@ export function SimpleScene({
 
       // Render with the active camera
       const activeCamera = cameraController.getCamera();
-      renderer.render(scene, activeCamera);
+
+      // In first-person mode, always use the outline effect composer
+      // This ensures consistent rendering pipeline (no visual switch when targeting)
+      if (isFirstPersonRef.current && outlineEffectRef.current) {
+        outlineEffectRef.current.setCamera(activeCamera);
+        outlineEffectRef.current.render();
+      } else {
+        renderer.render(scene, activeCamera);
+      }
     }
     animate(0);
 
@@ -1864,6 +1888,7 @@ export function SimpleScene({
       const height = container.clientHeight;
       cameraController.handleResize(width, height);
       renderer.setSize(width, height);
+      outlineEffectRef.current?.setSize(width, height);
     };
     window.addEventListener('resize', handleResize);
 
@@ -1896,6 +1921,7 @@ export function SimpleScene({
       teleportEffectRef.current?.dispose();
       magicCircleRef.current?.dispose();
       firstPersonHandsRef.current?.dispose();
+      outlineEffectRef.current?.dispose();
       wizardInstance.dispose();
       // Cleanup wildlife
       for (const animal of wildlifeRef.current) {

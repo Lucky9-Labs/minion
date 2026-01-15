@@ -21,10 +21,9 @@ export class TargetingSystem {
   private currentTarget: Target | null = null;
   private maxDistance: number = 200; // Increased for isometric camera which is far from scene
 
-  // For highlight effect
+  // For tracking highlighted entity (no longer modifies materials - uses post-processing outline instead)
   private highlightedMesh: THREE.Object3D | null = null;
   private highlightedEntityId: string | null = null;
-  private originalMaterials: Map<THREE.Mesh, THREE.Material | THREE.Material[]> = new Map();
 
   // Mouse position for isometric raycasting (normalized -1 to 1)
   private mouseNDC: THREE.Vector2 = new THREE.Vector2();
@@ -162,8 +161,7 @@ export class TargetingSystem {
           entity: nearestMinion.data,
         };
         if (this.highlightedEntityId !== nearestMinion.id) {
-          this.clearHighlight();
-          this.applyHighlight(nearestMinion.mesh, nearestMinion.id);
+          this.setHighlightedEntity(nearestMinion.mesh, nearestMinion.id);
         }
         return this.currentTarget;
       }
@@ -186,8 +184,7 @@ export class TargetingSystem {
         };
         // Only update highlight if target changed
         if (this.highlightedEntityId !== entity.id) {
-          this.clearHighlight();
-          this.applyHighlight(entity.mesh, entity.id);
+          this.setHighlightedEntity(entity.mesh, entity.id);
         }
         return this.currentTarget;
       }
@@ -208,8 +205,7 @@ export class TargetingSystem {
           entity: nearestBuilding.data,
         };
         if (this.highlightedEntityId !== nearestBuilding.id) {
-          this.clearHighlight();
-          this.applyHighlight(nearestBuilding.mesh, nearestBuilding.id);
+          this.setHighlightedEntity(nearestBuilding.mesh, nearestBuilding.id);
         }
         return this.currentTarget;
       }
@@ -231,8 +227,7 @@ export class TargetingSystem {
           entity: entity.data,
         };
         if (this.highlightedEntityId !== entity.id) {
-          this.clearHighlight();
-          this.applyHighlight(entity.mesh, entity.id);
+          this.setHighlightedEntity(entity.mesh, entity.id);
         }
         return this.currentTarget;
       }
@@ -245,7 +240,7 @@ export class TargetingSystem {
         const hit = groundHits[0];
         // Clear highlight when targeting ground
         if (this.highlightedEntityId !== null) {
-          this.clearHighlight();
+          this.clearHighlightedEntity();
         }
         this.currentTarget = {
           type: 'ground',
@@ -261,7 +256,7 @@ export class TargetingSystem {
 
     // No hit - clear highlight
     if (this.highlightedEntityId !== null) {
-      this.clearHighlight();
+      this.clearHighlightedEntity();
     }
     this.currentTarget = null;
     return null;
@@ -281,58 +276,36 @@ export class TargetingSystem {
     return null;
   }
 
-  private applyHighlight(mesh: THREE.Object3D, entityId: string): void {
+  /**
+   * Set the currently highlighted entity (for outline effect tracking).
+   * Does not modify materials - outline is handled via post-processing.
+   */
+  private setHighlightedEntity(mesh: THREE.Object3D, entityId: string): void {
     this.highlightedMesh = mesh;
     this.highlightedEntityId = entityId;
-
-    mesh.traverse((child) => {
-      if (child instanceof THREE.Mesh && child.material) {
-        // Store original material
-        this.originalMaterials.set(child, child.material);
-
-        // Clone and modify material for highlight
-        if (Array.isArray(child.material)) {
-          child.material = child.material.map((m) => {
-            const cloned = m.clone();
-            if ('emissive' in cloned) {
-              (cloned as THREE.MeshStandardMaterial).emissive = new THREE.Color(0x9966ff);
-              (cloned as THREE.MeshStandardMaterial).emissiveIntensity = 0.3;
-            }
-            return cloned;
-          });
-        } else {
-          const cloned = child.material.clone();
-          if ('emissive' in cloned) {
-            (cloned as THREE.MeshStandardMaterial).emissive = new THREE.Color(0x9966ff);
-            (cloned as THREE.MeshStandardMaterial).emissiveIntensity = 0.3;
-          }
-          child.material = cloned;
-        }
-      }
-    });
   }
 
-  private clearHighlight(): void {
-    if (!this.highlightedMesh) return;
-
-    this.highlightedMesh.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        const original = this.originalMaterials.get(child);
-        if (original) {
-          // Dispose cloned materials
-          if (Array.isArray(child.material)) {
-            child.material.forEach((m) => m.dispose());
-          } else {
-            child.material.dispose();
-          }
-          child.material = original;
-        }
-      }
-    });
-
-    this.originalMaterials.clear();
+  /**
+   * Clear the currently highlighted entity.
+   */
+  private clearHighlightedEntity(): void {
     this.highlightedMesh = null;
     this.highlightedEntityId = null;
+  }
+
+  /**
+   * Get the currently highlighted mesh for outline rendering.
+   * Returns null if no entity is currently highlighted.
+   */
+  getHighlightedMesh(): THREE.Object3D | null {
+    return this.highlightedMesh;
+  }
+
+  /**
+   * Get the ID of the currently highlighted entity.
+   */
+  getHighlightedEntityId(): string | null {
+    return this.highlightedEntityId;
   }
 
   getTarget(): Target | null {
@@ -352,7 +325,7 @@ export class TargetingSystem {
   }
 
   dispose(): void {
-    this.clearHighlight();
+    this.clearHighlightedEntity();
     this.registeredEntities.clear();
   }
 }
