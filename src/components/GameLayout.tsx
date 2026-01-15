@@ -291,73 +291,63 @@ export function GameLayout() {
         </div>
       </div>
 
-      {/* Grid selection instructions - shown when in drawing mode */}
+      {/* Grid selection instructions - FPS style floating HUD */}
       {interactionMode === 'drawing' && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-          <div
-            className="animate-scale-in"
-            style={{
-              background: `linear-gradient(180deg, ${wowTheme.colors.stoneMid}ee 0%, ${wowTheme.colors.stoneDark}ee 100%)`,
-              border: `3px solid ${wowTheme.colors.goldMid}`,
-              borderRadius: wowTheme.radius.md,
-              padding: '24px 32px',
-              textAlign: 'center',
-              boxShadow: `${wowTheme.shadows.panelHeavy}, 0 0 20px #8b5cf680`,
-            }}
-          >
-            <h2 style={{
-              color: wowTheme.colors.goldLight,
-              fontSize: wowTheme.fontSizes.lg,
-              fontWeight: 700,
-              fontFamily: wowTheme.fonts.header,
-              marginBottom: '16px',
-              textShadow: wowTheme.shadows.textEmboss,
+        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 pointer-events-none">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', textAlign: 'center' }}>
+            {/* Commit instruction */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
             }}>
-              Select Building Zone
-            </h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              <div style={{
+              <span style={{
+                fontSize: wowTheme.fontSizes.md,
+                fontWeight: 700,
                 color: wowTheme.colors.goldLight,
-                fontSize: wowTheme.fontSizes.md,
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
+                textShadow: `0 0 8px ${wowTheme.colors.goldMid}, 0 2px 4px rgba(0,0,0,0.5)`,
+                fontFamily: 'monospace',
+                letterSpacing: '1px',
               }}>
-                <span style={{
-                  background: wowTheme.colors.goldMid,
-                  color: wowTheme.colors.bgDarkest,
-                  padding: '4px 8px',
-                  borderRadius: wowTheme.radius.sm,
-                  fontSize: wowTheme.fontSizes.sm,
-                  fontWeight: 700,
-                }}>
-                  ENTER
-                </span>
-                to commit
-              </div>
-              <div style={{
+                [ENTER]
+              </span>
+              <span style={{
+                fontSize: wowTheme.fontSizes.sm,
+                fontWeight: 600,
+                color: wowTheme.colors.textPrimary,
+                textShadow: '0 2px 4px rgba(0,0,0,0.7)',
+              }}>
+                Commit Zone
+              </span>
+            </div>
+
+            {/* Cancel instruction */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+            }}>
+              <span style={{
+                fontSize: wowTheme.fontSizes.md,
+                fontWeight: 700,
                 color: wowTheme.colors.textSecondary,
-                fontSize: wowTheme.fontSizes.md,
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: '8px',
+                textShadow: `0 0 8px ${wowTheme.colors.textMuted}, 0 2px 4px rgba(0,0,0,0.5)`,
+                fontFamily: 'monospace',
+                letterSpacing: '1px',
               }}>
-                <span style={{
-                  background: wowTheme.colors.textMuted,
-                  color: wowTheme.colors.bgDarkest,
-                  padding: '4px 8px',
-                  borderRadius: wowTheme.radius.sm,
-                  fontSize: wowTheme.fontSizes.sm,
-                  fontWeight: 700,
-                }}>
-                  RIGHT CLICK
-                </span>
-                to cancel
-              </div>
+                [RMB]
+              </span>
+              <span style={{
+                fontSize: wowTheme.fontSizes.sm,
+                fontWeight: 600,
+                color: wowTheme.colors.textMuted,
+                textShadow: '0 2px 4px rgba(0,0,0,0.7)',
+              }}>
+                Cancel
+              </span>
             </div>
           </div>
         </div>
