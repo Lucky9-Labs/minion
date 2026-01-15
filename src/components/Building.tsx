@@ -1,6 +1,6 @@
 'use client';
 
-import type { BuildingType, BuildingStage } from '@/types/project';
+import type { BuildingType, BuildingStage, OpenPR } from '@/types/project';
 import {
   CottageBuilding,
   WorkshopBuilding,
@@ -18,6 +18,8 @@ interface BuildingProps {
   onClick?: () => void;
   isSelected?: boolean;
   name?: string;
+  openPRs?: OpenPR[];
+  projectId?: string;
 }
 
 export function Building({
@@ -27,6 +29,8 @@ export function Building({
   position,
   onClick,
   isSelected,
+  openPRs = [],
+  projectId,
 }: BuildingProps) {
   const buildingProps = {
     stage,
@@ -34,6 +38,8 @@ export function Building({
     position,
     onClick,
     isSelected,
+    openPRs,
+    projectId,
   };
 
   switch (type) {

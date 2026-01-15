@@ -17,6 +17,7 @@ import { useMinionMovement } from '@/lib/questSimulation';
 import { WowIcon } from './ui/WowIcon';
 import { wowTheme } from '@/styles/theme';
 import { initSoundSettings, preloadSounds, playSound } from '@/lib/sounds';
+import { useProjectPolling } from '@/hooks/useProjectPolling';
 import type { InteractionMode, MenuOption, Target, DrawnFoundation } from '@/types/interaction';
 
 type ActivePanel = 'minions' | 'quests' | 'vault' | null;
@@ -49,6 +50,9 @@ export function GameLayout() {
 
   // Animate minion movement during quests
   useMinionMovement();
+
+  // Poll for project/PR changes every 30 seconds
+  useProjectPolling(30000);
 
   const togglePanel = (panel: ActivePanel) => {
     if (activePanel === panel) {

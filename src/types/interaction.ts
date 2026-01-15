@@ -23,7 +23,8 @@ export type InteractionMode =
   | 'aiming'         // Holding but not locked yet
   | 'menu'           // Circle menu open
   | 'grabbing'       // Force pulling an entity
-  | 'drawing';       // Drawing on ground
+  | 'drawing'        // Drawing on ground
+  | 'moving';        // Moving a building
 
 export interface InteractionState {
   mode: InteractionMode;
@@ -53,6 +54,7 @@ export const MINION_MENU_OPTIONS: MenuOption[] = [
 export const BUILDING_MENU_OPTIONS: MenuOption[] = [
   { id: 'status', label: 'Status', icon: '📊', description: 'View building status' },
   { id: 'workers', label: 'Workers', icon: '👷', description: 'List assigned minions' },
+  { id: 'move', label: 'Move', icon: '🏗️', description: 'Relocate building' },
   { id: 'aesthetic', label: 'Aesthetic', icon: '🎨', description: 'Change appearance' },
   { id: 'cancel', label: 'Cancel', icon: '✕', description: 'Close menu' },
 ];
