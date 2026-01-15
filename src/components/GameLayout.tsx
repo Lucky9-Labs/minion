@@ -291,8 +291,80 @@ export function GameLayout() {
         </div>
       </div>
 
+      {/* Grid selection instructions - shown when in drawing mode */}
+      {interactionMode === 'drawing' && (
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+          <div
+            className="animate-scale-in"
+            style={{
+              background: `linear-gradient(180deg, ${wowTheme.colors.stoneMid}ee 0%, ${wowTheme.colors.stoneDark}ee 100%)`,
+              border: `3px solid ${wowTheme.colors.goldMid}`,
+              borderRadius: wowTheme.radius.md,
+              padding: '24px 32px',
+              textAlign: 'center',
+              boxShadow: `${wowTheme.shadows.panelHeavy}, 0 0 20px #8b5cf680`,
+            }}
+          >
+            <h2 style={{
+              color: wowTheme.colors.goldLight,
+              fontSize: wowTheme.fontSizes.lg,
+              fontWeight: 700,
+              fontFamily: wowTheme.fonts.header,
+              marginBottom: '16px',
+              textShadow: wowTheme.shadows.textEmboss,
+            }}>
+              Select Building Zone
+            </h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <div style={{
+                color: wowTheme.colors.goldLight,
+                fontSize: wowTheme.fontSizes.md,
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+              }}>
+                <span style={{
+                  background: wowTheme.colors.goldMid,
+                  color: wowTheme.colors.bgDarkest,
+                  padding: '4px 8px',
+                  borderRadius: wowTheme.radius.sm,
+                  fontSize: wowTheme.fontSizes.sm,
+                  fontWeight: 700,
+                }}>
+                  ENTER
+                </span>
+                to commit
+              </div>
+              <div style={{
+                color: wowTheme.colors.textSecondary,
+                fontSize: wowTheme.fontSizes.md,
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+              }}>
+                <span style={{
+                  background: wowTheme.colors.textMuted,
+                  color: wowTheme.colors.bgDarkest,
+                  padding: '4px 8px',
+                  borderRadius: wowTheme.radius.sm,
+                  fontSize: wowTheme.fontSizes.sm,
+                  fontWeight: 700,
+                }}>
+                  RIGHT CLICK
+                </span>
+                to cancel
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Instructions for new users */}
-      {minions.length === 0 && (
+      {minions.length === 0 && interactionMode !== 'drawing' && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
           <div
             className="animate-scale-in"
