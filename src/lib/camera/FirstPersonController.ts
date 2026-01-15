@@ -8,6 +8,11 @@ export interface FirstPersonConfig {
   acceleration: number;        // Movement acceleration
   deceleration: number;        // Friction/drag when no input
   pitchLimit: number;          // Max pitch in radians (prevents gimbal lock)
+  // Flight configuration
+  flightSpeedMultiplier: number;  // Speed reduction while flying (e.g., 0.3)
+  flightAscendSpeed: number;      // Vertical ascend speed (units/sec)
+  flightDescendSpeed: number;     // Vertical descend speed (units/sec)
+  flightHoverHeight: number;      // Minimum hover height above ground
 }
 
 export const DEFAULT_FIRST_PERSON_CONFIG: FirstPersonConfig = {
@@ -18,6 +23,11 @@ export const DEFAULT_FIRST_PERSON_CONFIG: FirstPersonConfig = {
   acceleration: 20,
   deceleration: 12,
   pitchLimit: Math.PI * 0.45, // ~81 degrees
+  // Flight defaults
+  flightSpeedMultiplier: 0.3,     // 30% of normal speed
+  flightAscendSpeed: 2.5,
+  flightDescendSpeed: 3.0,
+  flightHoverHeight: 0.75,        // ~0.75 units above ground
 };
 
 // Key bindings for movement
@@ -35,6 +45,8 @@ interface InputState {
   left: boolean;
   right: boolean;
   sprint: boolean;
+  ascend: boolean;   // Space key while flying
+  descend: boolean;  // Ctrl key while flying
 }
 
 interface HeightProvider {
@@ -65,6 +77,10 @@ export class FirstPersonController {
   // Collision settings
   private collisionRadius: number = 0.3;
 
+  // Flight state
+  private isFlying: boolean = false;
+  private flightVerticalVelocity: number = 0;
+
   constructor(config: Partial<FirstPersonConfig> = {}) {
     this.config = { ...DEFAULT_FIRST_PERSON_CONFIG, ...config };
 
@@ -79,6 +95,8 @@ export class FirstPersonController {
       left: false,
       right: false,
       sprint: false,
+      ascend: false,
+      descend: false,
     };
 
     this.mouseDelta = new THREE.Vector2();
@@ -168,6 +186,12 @@ export class FirstPersonController {
     if (code === 'ShiftLeft' || code === 'ShiftRight') {
       this.keys.sprint = true;
     }
+    if (code === 'Space') {
+      this.keys.ascend = true;
+    }
+    if (code === 'ControlLeft' || code === 'ControlRight') {
+      this.keys.descend = true;
+    }
   }
 
   /**
@@ -191,6 +215,12 @@ export class FirstPersonController {
     if (code === 'ShiftLeft' || code === 'ShiftRight') {
       this.keys.sprint = false;
     }
+    if (code === 'Space') {
+      this.keys.ascend = false;
+    }
+    if (code === 'ControlLeft' || code === 'ControlRight') {
+      this.keys.descend = false;
+    }
   }
 
   /**
@@ -210,9 +240,14 @@ export class FirstPersonController {
     this.keys.left = false;
     this.keys.right = false;
     this.keys.sprint = false;
+    this.keys.ascend = false;
+    this.keys.descend = false;
     this.mouseDelta.set(0, 0);
     this.mouseDeltaAccum.set(0, 0);
     this.velocity.set(0, 0, 0);
+    // Reset flight state
+    this.isFlying = false;
+    this.flightVerticalVelocity = 0;
   }
 
   /**
@@ -260,10 +295,14 @@ export class FirstPersonController {
       -inputDir.x * sinYaw + inputDir.z * cosYaw
     );
 
-    // Calculate target velocity
-    const speed = this.keys.sprint
+    // Calculate target velocity (reduced while flying)
+    const baseSpeed = this.keys.sprint
       ? this.config.moveSpeed * this.config.sprintMultiplier
       : this.config.moveSpeed;
+
+    const speed = this.isFlying
+      ? baseSpeed * this.config.flightSpeedMultiplier
+      : baseSpeed;
 
     const targetVelocity = worldDir.multiplyScalar(speed);
 
@@ -285,18 +324,49 @@ export class FirstPersonController {
       newPosition = this.resolveCollisions(newPosition, collisionMeshes);
     }
 
-    // Apply terrain height
+    // Apply terrain height or flight physics
     if (heightProvider) {
       const groundHeight = heightProvider.getHeightAt(newPosition.x, newPosition.z);
-      newPosition.y = groundHeight + this.config.eyeHeight;
+
+      if (this.isFlying) {
+        // Handle vertical movement while flying
+        if (this.keys.ascend) {
+          this.flightVerticalVelocity = this.config.flightAscendSpeed;
+        } else if (this.keys.descend) {
+          this.flightVerticalVelocity = -this.config.flightDescendSpeed;
+        } else {
+          // Gentle hover deceleration
+          this.flightVerticalVelocity *= 0.9;
+        }
+
+        newPosition.y += this.flightVerticalVelocity * deltaTime;
+
+        // Check ground collision for exit
+        const minFlightHeight = groundHeight + this.config.eyeHeight + this.config.flightHoverHeight;
+
+        if (newPosition.y <= minFlightHeight && this.flightVerticalVelocity <= 0) {
+          // Landing - exit flight mode
+          this.isFlying = false;
+          this.flightVerticalVelocity = 0;
+          newPosition.y = groundHeight + this.config.eyeHeight;
+        }
+      } else {
+        // Normal ground following
+        newPosition.y = groundHeight + this.config.eyeHeight;
+      }
     }
 
     this.position.copy(newPosition);
 
-    // Update view bob
+    // Update view bob (disabled while flying for smooth hover)
     const currentSpeed = this.velocity.length();
-    this.bobIntensity = THREE.MathUtils.lerp(this.bobIntensity, currentSpeed > 0.5 ? 1 : 0, deltaTime * 8);
-    this.bobPhase += deltaTime * currentSpeed * 2.5;
+    if (!this.isFlying) {
+      this.bobIntensity = THREE.MathUtils.lerp(this.bobIntensity, currentSpeed > 0.5 ? 1 : 0, deltaTime * 8);
+      this.bobPhase += deltaTime * currentSpeed * 2.5;
+    } else {
+      // Smooth fade out of bob while flying
+      this.bobIntensity = THREE.MathUtils.lerp(this.bobIntensity, 0, deltaTime * 4);
+    }
 
     // Update camera if set
     if (this.camera) {
@@ -372,5 +442,39 @@ export class FirstPersonController {
       -this.mouseDelta.x * 0.0005,
       -this.mouseDelta.y * 0.0005
     );
+  }
+
+  // ==================== Flight API ====================
+
+  /**
+   * Start flight mode with initial lift
+   */
+  startFlight(): void {
+    if (!this.isFlying) {
+      this.isFlying = true;
+      this.flightVerticalVelocity = this.config.flightAscendSpeed * 0.5; // Initial lift
+    }
+  }
+
+  /**
+   * Stop flight mode immediately
+   */
+  stopFlight(): void {
+    this.isFlying = false;
+    this.flightVerticalVelocity = 0;
+  }
+
+  /**
+   * Check if currently flying
+   */
+  getIsFlying(): boolean {
+    return this.isFlying;
+  }
+
+  /**
+   * Get flight vertical velocity (for effects)
+   */
+  getFlightVerticalVelocity(): number {
+    return this.flightVerticalVelocity;
   }
 }

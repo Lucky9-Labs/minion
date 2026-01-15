@@ -57,8 +57,8 @@ export function useMinionMovement() {
         const targetPos = PHASE_POSITIONS[quest.phase];
         const currentPos = minion.position;
 
-        // Lerp towards target position
-        const lerpFactor = 0.02;
+        // Lerp towards target position (halved for proportional movement with smaller minions)
+        const lerpFactor = 0.01;
         const newX = currentPos.x + (targetPos.x - currentPos.x) * lerpFactor;
         const newY = currentPos.y + (targetPos.y - currentPos.y) * lerpFactor;
         const newZ = currentPos.z + (targetPos.z - currentPos.z) * lerpFactor;

@@ -14,7 +14,7 @@ import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
 import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
 import { CameraController } from '@/lib/camera';
-import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall, OutlineEffect } from '@/lib/effects';
+import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall, OutlineEffect, FlightEffect } from '@/lib/effects';
 import type { ReactionType } from '@/lib/effects';
 import { IslandEdgeBuilder } from '@/lib/terrain';
 import { WizardBehavior } from '@/lib/wizard';
@@ -148,6 +148,9 @@ export function SimpleScene({
   const interiorLightsRef = useRef<InteriorLight[]>([]);
   const collisionMeshesRef = useRef<THREE.Mesh[]>([]);
   const teleportEffectRef = useRef<TeleportEffect | null>(null);
+  const flightEffectRef = useRef<FlightEffect | null>(null);
+  const lastSpacePressRef = useRef<number>(0);
+  const wasWizardFlyingRef = useRef<boolean>(false);
   const magicCircleRef = useRef<MagicCircle | null>(null);
   const wizardBehaviorRef = useRef<WizardBehavior | null>(null);
   const wildlifeRef = useRef<WildlifeData[]>([]);
@@ -891,6 +894,11 @@ export function SimpleScene({
 
     teleportEffectRef.current = teleportEffect;
 
+    // Create flight effect (particle trail while flying)
+    const flightEffect = new FlightEffect();
+    scene.add(flightEffect.getGroup());
+    flightEffectRef.current = flightEffect;
+
     // Create first person hands viewmodel (attached to perspective camera)
     const firstPersonHands = new FirstPersonHands();
     firstPersonHands.setVisible(false);
@@ -1015,6 +1023,9 @@ export function SimpleScene({
     // === FIRST PERSON MODE INPUT HANDLING ===
     const fpController = cameraController.getFirstPersonController();
 
+    // Double-tap threshold for flight activation
+    const DOUBLE_TAP_THRESHOLD = 300; // milliseconds
+
     // Toggle first person mode with Tab key
     function handleKeyDown(event: KeyboardEvent) {
       // Toggle first person mode
@@ -1031,6 +1042,23 @@ export function SimpleScene({
           enterFirstPersonMode();
         }
         return;
+      }
+
+      // Double-tap Space to toggle flight in first person mode
+      if (event.code === 'Space' && isFirstPersonRef.current) {
+        const now = Date.now();
+        const timeSinceLastPress = now - lastSpacePressRef.current;
+
+        if (timeSinceLastPress < DOUBLE_TAP_THRESHOLD && timeSinceLastPress > 50) {
+          // Double-tap detected - toggle flight
+          if (!fpController.getIsFlying()) {
+            fpController.startFlight();
+            flightEffectRef.current?.start();
+          }
+          lastSpacePressRef.current = 0; // Reset to prevent triple-tap
+        } else {
+          lastSpacePressRef.current = now;
+        }
       }
 
       // Forward input to first person controller when in first person mode
@@ -1482,6 +1510,23 @@ export function SimpleScene({
           cameraController.updateFirstPerson(deltaTime, terrainBuilder, collisionMeshesRef.current);
         }
 
+        // Update flight effect while flying
+        const isFlying = fpController.getIsFlying();
+        const wasFlying = wasWizardFlyingRef.current;
+
+        if (isFlying || flightEffectRef.current?.isVisible()) {
+          // Get wizard position for particle emission
+          const wizardPos = fpController.getGroundPosition();
+          flightEffectRef.current?.update(deltaTime, wizardPos);
+        }
+
+        // Detect flight end (landing)
+        if (wasFlying && !isFlying) {
+          flightEffectRef.current?.stop();
+        }
+
+        wasWizardFlyingRef.current = isFlying;
+
         // Update first person hands animation
         if (firstPersonHandsRef.current) {
           const isMoving = fpController.isMoving();
@@ -1919,6 +1964,7 @@ export function SimpleScene({
       }
       cameraControllerRef.current?.dispose();
       teleportEffectRef.current?.dispose();
+      flightEffectRef.current?.dispose();
       magicCircleRef.current?.dispose();
       firstPersonHandsRef.current?.dispose();
       outlineEffectRef.current?.dispose();
