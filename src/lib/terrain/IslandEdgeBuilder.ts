@@ -159,7 +159,8 @@ export class IslandEdgeBuilder {
       if (isWaterfallArea) {
         // Add framing rocks on the sides of the waterfall
         if (normalizedDiff > waterfallWidth * 0.4 && normalizedDiff < waterfallWidth * 0.9) {
-          this.addWaterfallFrameRocks(group, angle, islandRadius, rimHeight, getHeightAt);
+          const waterFrameHeightMult = this.getHeightMultiplierForAngle(angle);
+          this.addWaterfallFrameRocks(group, angle, islandRadius, rimHeight, getHeightAt, waterFrameHeightMult);
         }
         continue;
       }
@@ -307,22 +308,23 @@ export class IslandEdgeBuilder {
     angle: number,
     islandRadius: number,
     rimHeight: number,
-    getHeightAt: (x: number, z: number) => number
+    getHeightAt: (x: number, z: number) => number,
+    heightMult: number = 1.0
   ): void {
     const sampleX = Math.cos(angle) * islandRadius * 0.85;
     const sampleZ = Math.sin(angle) * islandRadius * 0.85;
     const baseY = getHeightAt(sampleX, sampleZ);
 
-    // Create taller framing rocks
+    // Create taller framing rocks, reduced by height multiplier
     for (let i = 0; i < 3; i++) {
       const radiusOffset = 0.9 + i * 0.05;
       const x = Math.cos(angle) * islandRadius * radiusOffset;
       const z = Math.sin(angle) * islandRadius * radiusOffset;
 
-      const rock = this.buildSimpleRock(rimHeight * (1.2 + i * 0.3));
+      const rock = this.buildSimpleRock(rimHeight * (1.2 + i * 0.3) * heightMult);
       rock.position.set(
         x + (Math.random() - 0.5) * 2,
-        baseY + i * rimHeight * 0.15,
+        baseY + i * rimHeight * 0.15 * heightMult,
         z + (Math.random() - 0.5) * 2
       );
       rock.rotation.y = angle + Math.PI;
