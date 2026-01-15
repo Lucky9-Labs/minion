@@ -1,0 +1,7 @@
+{
+  "branch": "feat-enable-flight-wizard-double-click",
+  "description": "enable flight for the wizard; if I double click space, I start floating, but move MUCH slower than if I were walking",
+  "issue_number": 19,
+  "pr_number": null,
+  "created_at": "2026-01-14T21:24:13Z"
+}
