@@ -620,7 +620,7 @@ export function SimpleScene({
     waterfallRef.current = waterfall;
 
     // === PORTAL GATEWAY (at true south) ===
-    const portalZ = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2 * 0.85; // Near south edge
+    const portalZ = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2 * 0.65; // At south edge, visible
     const portalY = terrainBuilder.getHeightAt(0, portalZ);
     const portalGateway = new PortalGateway();
     const portalMesh = portalGateway.getMesh();
