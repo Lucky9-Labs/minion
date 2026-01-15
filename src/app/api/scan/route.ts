@@ -4,7 +4,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import os from 'os';
-import type { ChaudProject, Worktree, Building, ProjectContext } from '@/types/project';
+import type { ChaudProject, Worktree, Building, ProjectContext, OpenPR } from '@/types/project';
 
 const execAsync = promisify(exec);
 
@@ -65,8 +65,67 @@ async function getMergeCount(projectPath: string): Promise<number> {
   }
 }
 
-// Get worktrees for a project
-async function getWorktrees(projectPath: string): Promise<Worktree[]> {
+// Get GitHub remote owner/repo from git remote URL
+async function getGitHubRepo(projectPath: string): Promise<string | null> {
+  try {
+    const { stdout } = await execAsync(
+      `cd "${projectPath}" && git remote get-url origin 2>/dev/null`
+    );
+    const url = stdout.trim();
+    // Parse GitHub URL formats:
+    // https://github.com/owner/repo.git
+    // git@github.com:owner/repo.git
+    const httpsMatch = url.match(/github\.com\/([^\/]+\/[^\/\.]+)/);
+    const sshMatch = url.match(/github\.com:([^\/]+\/[^\/\.]+)/);
+    const match = httpsMatch || sshMatch;
+    if (match) {
+      return match[1].replace(/\.git$/, '');
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Get open PRs using GitHub CLI
+async function getOpenPRs(projectPath: string): Promise<OpenPR[]> {
+  const repo = await getGitHubRepo(projectPath);
+  if (!repo) return [];
+
+  try {
+    const { stdout } = await execAsync(
+      `gh pr list --repo "${repo}" --state open --json number,title,headRefName,createdAt 2>/dev/null`
+    );
+    const prs = JSON.parse(stdout || '[]');
+    return prs.map((pr: { number: number; title: string; headRefName: string; createdAt: string }) => ({
+      number: pr.number,
+      title: pr.title,
+      branch: pr.headRefName,
+      createdAt: new Date(pr.createdAt).getTime(),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+// Get merged PR count using GitHub CLI
+async function getMergedPRCount(projectPath: string): Promise<number> {
+  const repo = await getGitHubRepo(projectPath);
+  if (!repo) return 0;
+
+  try {
+    const { stdout } = await execAsync(
+      `gh pr list --repo "${repo}" --state merged --json number 2>/dev/null`
+    );
+    const prs = JSON.parse(stdout || '[]');
+    return prs.length;
+  } catch {
+    return 0;
+  }
+}
+
+// Get worktrees for a project with PR linking
+async function getWorktrees(projectPath: string, openPRs: OpenPR[]): Promise<Worktree[]> {
   const worktrees: Worktree[] = [];
   const worktreesDir = path.join(projectPath, '.worktrees');
 
@@ -76,6 +135,8 @@ async function getWorktrees(projectPath: string): Promise<Worktree[]> {
       if (entry.isDirectory()) {
         const worktreePath = path.join(worktreesDir, entry.name);
         const stat = await fs.stat(worktreePath);
+        // Find matching PR by branch name
+        const matchingPR = openPRs.find(pr => pr.branch === entry.name);
         worktrees.push({
           id: generateProjectId(worktreePath),
           branch: entry.name,
@@ -83,6 +144,7 @@ async function getWorktrees(projectPath: string): Promise<Worktree[]> {
           minionId: null, // Will be assigned by client
           isActive: true,
           createdAt: stat.birthtimeMs,
+          prNumber: matchingPR?.number || null,
         });
       }
     }
@@ -94,16 +156,16 @@ async function getWorktrees(projectPath: string): Promise<Worktree[]> {
 }
 
 // Determine building stage based on project state
+// Scaffolding only appears when there are open PRs
 function determineBuildingStage(
   hasChaud: boolean,
-  worktreeCount: number,
+  openPRCount: number,
   mergeCount: number
 ): Building['stage'] {
   if (!hasChaud) return 'planning';
-  if (worktreeCount === 0 && mergeCount === 0) return 'foundation';
-  if (worktreeCount > 0) return 'scaffolding';
+  if (openPRCount > 0) return 'scaffolding';
   if (mergeCount > 0) return 'decorated';
-  return 'constructed';
+  return 'foundation';
 }
 
 // Scan ~/Code for chaud projects
@@ -125,17 +187,24 @@ async function scanProjects(): Promise<ChaudProject[]> {
         await fs.access(chaudPath);
         // Has .chaud directory - this is a chaud project
 
-        const context = await getProjectContext(projectPath);
-        const mergeCount = await getMergeCount(projectPath);
-        const worktrees = await getWorktrees(projectPath);
-        const stage = determineBuildingStage(true, worktrees.length, mergeCount);
+        // Fetch PR data from GitHub CLI
+        const openPRs = await getOpenPRs(projectPath);
+        const mergedPRCount = await getMergedPRCount(projectPath);
 
-        // Default building (will be enhanced by LLM)
+        // Also get git merge count as fallback
+        const gitMergeCount = await getMergeCount(projectPath);
+        // Use the higher of GitHub merged PRs or git merges
+        const mergeCount = Math.max(mergedPRCount, gitMergeCount);
+
+        const worktrees = await getWorktrees(projectPath, openPRs);
+        const stage = determineBuildingStage(true, openPRs.length, mergeCount);
+
+        // Building height = merged PR count (minimum 1)
         const building: Building = {
           type: entry.name === 'minion' ? 'tower' : 'cottage',
           aesthetic: '',
           stage,
-          level: Math.max(1, Math.floor(mergeCount / 2) + 1),
+          level: Math.max(1, mergeCount),
           position: { x: 0, z: 0 }, // Will be positioned by client
         };
 
@@ -145,6 +214,7 @@ async function scanProjects(): Promise<ChaudProject[]> {
           name: entry.name,
           building,
           worktrees,
+          openPRs,
           mergeCount,
           lastScanned: Date.now(),
         });

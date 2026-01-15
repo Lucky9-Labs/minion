@@ -12,6 +12,13 @@ export interface Building {
   rotation?: number; // Y-axis rotation in radians (for facing street)
 }
 
+export interface OpenPR {
+  number: number;
+  title: string;
+  branch: string; // headRefName - matches worktree.branch
+  createdAt: number;
+}
+
 export interface Worktree {
   id: string;
   branch: string;
@@ -19,6 +26,7 @@ export interface Worktree {
   minionId: string | null;
   isActive: boolean;
   createdAt: number;
+  prNumber: number | null; // Linked PR number
 }
 
 export interface ChaudProject {
@@ -27,6 +35,7 @@ export interface ChaudProject {
   name: string; // e.g., "restart"
   building: Building;
   worktrees: Worktree[];
+  openPRs: OpenPR[]; // Open PRs from GitHub
   mergeCount: number;
   lastScanned: number;
 }

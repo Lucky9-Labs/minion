@@ -17,6 +17,14 @@ export interface ConversationState {
 }
 export type MinionTrait = 'curious' | 'cautious' | 'opinionated' | 'reckless' | 'methodical';
 
+// Building assignment for minions working on scaffolding
+export interface BuildingAssignment {
+  projectId: string;
+  prNumber: number;
+  scaffoldPosition: { x: number; y: number; z: number }; // Position on scaffolding
+  isActive: boolean;
+}
+
 export interface Minion {
   id: string;
   name: string;
@@ -28,6 +36,8 @@ export interface Minion {
   skinId: string;
   currentQuestId: string | null;
   createdAt: number;
+  // Building work assignment (optional)
+  buildingAssignment?: BuildingAssignment;
 }
 
 export interface Memory {

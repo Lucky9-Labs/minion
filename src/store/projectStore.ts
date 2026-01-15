@@ -22,6 +22,10 @@ interface ProjectStore {
     worktreeId: string,
     minionId: string
   ) => void;
+  updateBuildingPosition: (
+    projectId: string,
+    position: { x: number; z: number }
+  ) => void;
 }
 
 // Village grid configuration - "Diagon Alley" style
@@ -111,10 +115,12 @@ export const useProjectStore = create<ProjectStore>()(
           const data = await response.json();
           const existingProjects = get().projects;
 
-          // Merge with existing data (preserve aesthetics and minion assignments)
+          // Merge with existing data (preserve aesthetics, minion assignments, and positions)
           const mergedProjects = data.projects.map((newProject: ChaudProject) => {
             const existing = existingProjects.find((p) => p.id === newProject.id);
             if (existing) {
+              // Check if position was manually set (non-zero, non-default)
+              const hasCustomPosition = existing.building.position.x !== 0 || existing.building.position.z !== 0;
               return {
                 ...newProject,
                 building: {
@@ -123,6 +129,9 @@ export const useProjectStore = create<ProjectStore>()(
                     ? existing.building.type
                     : newProject.building.type,
                   aesthetic: existing.building.aesthetic || '',
+                  // Preserve user-set position if it exists
+                  position: hasCustomPosition ? existing.building.position : newProject.building.position,
+                  rotation: existing.building.rotation,
                 },
                 worktrees: newProject.worktrees.map((wt) => {
                   const existingWt = existing.worktrees.find((w) => w.id === wt.id);
@@ -192,6 +201,19 @@ export const useProjectStore = create<ProjectStore>()(
                   worktrees: p.worktrees.map((w) =>
                     w.id === worktreeId ? { ...w, minionId } : w
                   ),
+                }
+              : p
+          ),
+        }));
+      },
+
+      updateBuildingPosition: (projectId, position) => {
+        set((state) => ({
+          projects: state.projects.map((p) =>
+            p.id === projectId
+              ? {
+                  ...p,
+                  building: { ...p.building, position },
                 }
               : p
           ),
