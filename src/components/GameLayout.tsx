@@ -291,8 +291,70 @@ export function GameLayout() {
         </div>
       </div>
 
+      {/* Grid selection instructions - FPS style floating HUD */}
+      {interactionMode === 'drawing' && (
+        <div className="absolute left-8 top-1/2 -translate-y-1/2 pointer-events-none">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', textAlign: 'center' }}>
+            {/* Commit instruction */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+              animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            }}>
+              <span style={{
+                fontSize: wowTheme.fontSizes.md,
+                fontWeight: 700,
+                color: wowTheme.colors.goldLight,
+                textShadow: `0 0 8px ${wowTheme.colors.goldMid}, 0 2px 4px rgba(0,0,0,0.5)`,
+                fontFamily: 'monospace',
+                letterSpacing: '1px',
+              }}>
+                [ENTER]
+              </span>
+              <span style={{
+                fontSize: wowTheme.fontSizes.sm,
+                fontWeight: 600,
+                color: wowTheme.colors.textPrimary,
+                textShadow: '0 2px 4px rgba(0,0,0,0.7)',
+              }}>
+                Commit Zone
+              </span>
+            </div>
+
+            {/* Cancel instruction */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+            }}>
+              <span style={{
+                fontSize: wowTheme.fontSizes.md,
+                fontWeight: 700,
+                color: wowTheme.colors.textSecondary,
+                textShadow: `0 0 8px ${wowTheme.colors.textMuted}, 0 2px 4px rgba(0,0,0,0.5)`,
+                fontFamily: 'monospace',
+                letterSpacing: '1px',
+              }}>
+                [RMB]
+              </span>
+              <span style={{
+                fontSize: wowTheme.fontSizes.sm,
+                fontWeight: 600,
+                color: wowTheme.colors.textMuted,
+                textShadow: '0 2px 4px rgba(0,0,0,0.7)',
+              }}>
+                Cancel
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Instructions for new users */}
-      {minions.length === 0 && (
+      {minions.length === 0 && interactionMode !== 'drawing' && (
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
           <div
             className="animate-scale-in"

@@ -65,14 +65,15 @@ export const GROUND_MENU_OPTIONS: MenuOption[] = [
 ];
 
 export interface DrawnFoundation {
-  cells: THREE.Vector2[];     // Grid cells that make up the foundation
+  cells: Set<string>;         // Grid cell IDs: "cell_x_y"
+  cellSize: number;           // Size of each cell in world units
   bounds: {
     min: THREE.Vector2;
     max: THREE.Vector2;
   };
   center: THREE.Vector3;      // World center position
-  area: number;
-  isComplete: boolean;        // True if path closed into a shape
+  area: number;               // Cell count
+  isComplete: boolean;        // True if at least 1 cell selected
 }
 
 export interface SpringConfig {
@@ -97,9 +98,9 @@ export interface GridConfig {
 }
 
 export const DEFAULT_GRID_CONFIG: GridConfig = {
-  cellSize: 1,
-  minSize: 3,
-  maxSize: 10,
+  cellSize: 1,        // 1-unit cells (original size)
+  minSize: 1,         // Minimum 1 cell (for small decor placements)
+  maxSize: 100,       // Maximum 100 cells (for massive structures)
   snapThreshold: 0.5,
 };
 
