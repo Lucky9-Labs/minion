@@ -587,7 +587,7 @@ export function SimpleScene({
       waterfallAngle,
       waterfallWidth: 0.5,
       southsideAngle: Math.PI / 2,
-      southsideTransitionWidth: 0.4,
+      southsideTransitionWidth: 1.2,
       southsideHeightMultiplier: 0.05,
     });
     const islandEdge = islandEdgeBuilder.build((x, z) => terrainBuilder.getHeightAt(x, z));
