@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import type { BuildingStage } from '@/types/project';
 import { StoneWall, WoodPlankRoof, CornerQuoin, STONE_COLORS, WOOD_COLORS } from './materials/StoneMaterial';
+import { createBuildingCollisionMeshes, createRoofCollisionMesh, createScaffoldingCollisionMeshes, disposeCollisionMeshes } from '@/lib/building/CollisionMeshHelper';
 
 interface ManorBuildingProps {
   stage: BuildingStage;
@@ -21,6 +22,7 @@ export function ManorBuilding({
   isSelected,
 }: ManorBuildingProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const collisionMeshesRef = useRef<THREE.Mesh[]>([]);
   const baseHeight = 2.5;
   const floorHeight = 1;
   const totalHeight = baseHeight + Math.min(level - 1, 5) * floorHeight;
@@ -39,6 +41,93 @@ export function ManorBuilding({
   const showDecorations = stage === 'decorated';
   const showRoof = stage !== 'planning' && stage !== 'foundation';
   const showStoneDetail = stage === 'constructed' || stage === 'decorated';
+
+  // Create collision meshes
+  useEffect(() => {
+    if (!groupRef.current || stage === 'planning') {
+      disposeCollisionMeshes(collisionMeshesRef.current, groupRef.current!);
+      collisionMeshesRef.current = [];
+      return;
+    }
+
+    disposeCollisionMeshes(collisionMeshesRef.current, groupRef.current);
+    const meshes: THREE.Mesh[] = [];
+
+    // Main center section walls
+    const wallMeshes = createBuildingCollisionMeshes(
+      groupRef.current,
+      {
+        frontWidth: 2.5,
+        sideWidth: 2.1,
+        wallHeight: totalHeight,
+        wallThickness: 0.18,
+        frontZ: 1.16,
+        backZ: -1.16,
+        leftX: -1.16,
+        rightX: 1.16,
+        centerY: 0.3,
+      }
+    );
+    meshes.push(...wallMeshes);
+
+    // Left wing collision
+    const leftWingGeo = new THREE.BoxGeometry(1.2, wingHeight, 2);
+    const leftWing = new THREE.Mesh(leftWingGeo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }));
+    leftWing.position.set(-1.8, wingHeight / 2 + 0.3, 0);
+    leftWing.userData.isCollisionMesh = true;
+    groupRef.current.add(leftWing);
+    meshes.push(leftWing);
+
+    // Right wing collision
+    const rightWingGeo = new THREE.BoxGeometry(1.2, wingHeight, 2);
+    const rightWing = new THREE.Mesh(rightWingGeo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 }));
+    rightWing.position.set(1.8, wingHeight / 2 + 0.3, 0);
+    rightWing.userData.isCollisionMesh = true;
+    groupRef.current.add(rightWing);
+    meshes.push(rightWing);
+
+    // Main roof collision - pyramidal
+    if (showRoof) {
+      const mainRoof = createRoofCollisionMesh(groupRef.current, 2.7, 2.7, totalHeight + 0.5);
+      meshes.push(mainRoof);
+
+      // Left wing roof
+      const leftWingRoof = createRoofCollisionMesh(groupRef.current, 1.4, 2.2, wingHeight + 0.4);
+      // Adjust position for left wing
+      leftWingRoof.position.x = -1.8;
+      meshes.push(leftWingRoof);
+
+      // Right wing roof
+      const rightWingRoof = createRoofCollisionMesh(groupRef.current, 1.4, 2.2, wingHeight + 0.4);
+      // Adjust position for right wing
+      rightWingRoof.position.x = 1.8;
+      meshes.push(rightWingRoof);
+    }
+
+    // Scaffolding collision
+    if (showScaffolding) {
+      const scaffoldMeshes = createScaffoldingCollisionMeshes(
+        groupRef.current,
+        [
+          [-2.5, -1.6],
+          [2.5, -1.6],
+          [-2.5, 1.6],
+          [2.5, 1.6],
+          [0, -1.6],
+          [0, 1.8],
+        ],
+        0.3,
+        totalHeight
+      );
+      meshes.push(...scaffoldMeshes);
+    }
+
+    collisionMeshesRef.current = meshes;
+
+    return () => {
+      disposeCollisionMeshes(meshes, groupRef.current!);
+    };
+  }, [stage, totalHeight, wingHeight, showRoof, showScaffolding]);
 
   return (
     <group ref={groupRef} position={position} onClick={onClick}>

@@ -1,9 +1,10 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import type { BuildingStage } from '@/types/project';
 import { StoneWall, WoodPlankRoof, CornerQuoin, STONE_COLORS, WOOD_COLORS } from './materials/StoneMaterial';
+import { createBuildingCollisionMeshes, createRoofCollisionMesh, createScaffoldingCollisionMeshes, disposeCollisionMeshes } from '@/lib/building/CollisionMeshHelper';
 
 interface WorkshopBuildingProps {
   stage: BuildingStage;
@@ -21,6 +22,7 @@ export function WorkshopBuilding({
   isSelected,
 }: WorkshopBuildingProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const collisionMeshesRef = useRef<THREE.Mesh[]>([]);
   const baseHeight = 2;
   const floorHeight = 1;
   const totalHeight = baseHeight + Math.min(level - 1, 4) * floorHeight;
@@ -38,6 +40,68 @@ export function WorkshopBuilding({
   const showDecorations = stage === 'decorated';
   const showRoof = stage !== 'planning' && stage !== 'foundation';
   const showStoneDetail = stage === 'constructed' || stage === 'decorated';
+
+  // Create collision meshes
+  useEffect(() => {
+    if (!groupRef.current || stage === 'planning') {
+      disposeCollisionMeshes(collisionMeshesRef.current, groupRef.current!);
+      collisionMeshesRef.current = [];
+      return;
+    }
+
+    disposeCollisionMeshes(collisionMeshesRef.current, groupRef.current);
+    const meshes: THREE.Mesh[] = [];
+
+    // Main walls
+    const wallMeshes = createBuildingCollisionMeshes(
+      groupRef.current,
+      {
+        frontWidth: 2.8,
+        sideWidth: 1.9,
+        wallHeight: totalHeight,
+        wallThickness: 0.18,
+        frontZ: 1.06,
+        backZ: -1.06,
+        leftX: -1.31,
+        rightX: 1.31,
+        centerY: 0.3,
+      },
+      {
+        width: 1.4,
+        height: 1.6,
+        centerY: 0.9,
+      }
+    );
+    meshes.push(...wallMeshes);
+
+    // Roof collision
+    if (showRoof) {
+      const roof = createRoofCollisionMesh(groupRef.current, 3.2, 2.8, totalHeight + 0.4);
+      meshes.push(roof);
+    }
+
+    // Scaffolding collision
+    if (showScaffolding) {
+      const scaffoldMeshes = createScaffoldingCollisionMeshes(
+        groupRef.current,
+        [
+          [-1.6, -1.4],
+          [1.6, -1.4],
+          [-1.6, 1.4],
+          [1.6, 1.4],
+        ],
+        0.3,
+        totalHeight
+      );
+      meshes.push(...scaffoldMeshes);
+    }
+
+    collisionMeshesRef.current = meshes;
+
+    return () => {
+      disposeCollisionMeshes(meshes, groupRef.current!);
+    };
+  }, [stage, totalHeight, showRoof, showScaffolding]);
 
   return (
     <group ref={groupRef} position={position} onClick={onClick}>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import type { BuildingStage } from '@/types/project';
 import { AnimatedDoor } from './AnimatedDoor';
@@ -24,6 +24,7 @@ export function CottageBuilding({
   buildingId,
 }: CottageBuildingProps) {
   const groupRef = useRef<THREE.Group>(null);
+  const collisionMeshesRef = useRef<THREE.Mesh[]>([]);
   const baseHeight = 1.5;
   const floorHeight = 0.8;
   const totalHeight = baseHeight + Math.min(level - 1, 3) * floorHeight;
@@ -41,6 +42,150 @@ export function CottageBuilding({
   const showDecorations = stage === 'decorated';
   const showRoof = stage !== 'planning' && stage !== 'foundation';
   const showStoneDetail = stage === 'constructed' || stage === 'decorated';
+
+  // Create collision meshes when building is visible
+  useEffect(() => {
+    if (!groupRef.current || stage === 'planning') {
+      // Clear collision meshes if planning or no group
+      collisionMeshesRef.current.forEach((mesh) => {
+        groupRef.current?.remove(mesh);
+        mesh.geometry.dispose();
+        (mesh.material as THREE.Material).dispose();
+      });
+      collisionMeshesRef.current = [];
+      return;
+    }
+
+    // Clear previous meshes
+    collisionMeshesRef.current.forEach((mesh) => {
+      groupRef.current?.remove(mesh);
+      mesh.geometry.dispose();
+      (mesh.material as THREE.Material).dispose();
+    });
+    collisionMeshesRef.current = [];
+
+    const collisionMaterial = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0 });
+    const meshes: THREE.Mesh[] = [];
+
+    const wallThickness = 0.15;
+    const doorWidth = 0.6;
+    const doorHeight = 1.0;
+
+    // Front wall (south) - split for door opening
+    const frontWallHeight = totalHeight;
+    const frontWallWidth = 1.8;
+
+    // Left section of front wall (left of door)
+    const frontLeftGeo = new THREE.BoxGeometry(
+      (frontWallWidth - doorWidth) / 2,
+      frontWallHeight,
+      wallThickness
+    );
+    const frontLeft = new THREE.Mesh(frontLeftGeo, collisionMaterial);
+    frontLeft.position.set(-(doorWidth / 2 + (frontWallWidth - doorWidth) / 4), totalHeight / 2 + 0.2, 0.83);
+    frontLeft.userData.isCollisionMesh = true;
+    groupRef.current.add(frontLeft);
+    meshes.push(frontLeft);
+
+    // Right section of front wall (right of door)
+    const frontRight = new THREE.Mesh(frontLeftGeo, collisionMaterial);
+    frontRight.position.set(doorWidth / 2 + (frontWallWidth - doorWidth) / 4, totalHeight / 2 + 0.2, 0.83);
+    frontRight.userData.isCollisionMesh = true;
+    groupRef.current.add(frontRight);
+    meshes.push(frontRight);
+
+    // Above door section
+    const aboveDoorGeo = new THREE.BoxGeometry(doorWidth, frontWallHeight - doorHeight, wallThickness);
+    const aboveDoor = new THREE.Mesh(aboveDoorGeo, collisionMaterial);
+    aboveDoor.position.set(0, doorHeight + (frontWallHeight - doorHeight) / 2 + 0.2, 0.83);
+    aboveDoor.userData.isCollisionMesh = true;
+    groupRef.current.add(aboveDoor);
+    meshes.push(aboveDoor);
+
+    // Back wall (north) - solid
+    const backWallGeo = new THREE.BoxGeometry(frontWallWidth, frontWallHeight, wallThickness);
+    const backWall = new THREE.Mesh(backWallGeo, collisionMaterial);
+    backWall.position.set(0, totalHeight / 2 + 0.2, -0.83);
+    backWall.userData.isCollisionMesh = true;
+    groupRef.current.add(backWall);
+    meshes.push(backWall);
+
+    // Left wall (west) - solid
+    const sideWallWidth = 1.5;
+    const leftWallGeo = new THREE.BoxGeometry(wallThickness, frontWallHeight, sideWallWidth);
+    const leftWall = new THREE.Mesh(leftWallGeo, collisionMaterial);
+    leftWall.position.set(-0.83, totalHeight / 2 + 0.2, 0);
+    leftWall.userData.isCollisionMesh = true;
+    groupRef.current.add(leftWall);
+    meshes.push(leftWall);
+
+    // Right wall (east) - solid
+    const rightWall = new THREE.Mesh(leftWallGeo, collisionMaterial);
+    rightWall.position.set(0.83, totalHeight / 2 + 0.2, 0);
+    rightWall.userData.isCollisionMesh = true;
+    groupRef.current.add(rightWall);
+    meshes.push(rightWall);
+
+    // Roof collision (optional - allows player to collide with roof from inside)
+    if (showRoof) {
+      const roofGeo = new THREE.BoxGeometry(2.2, 0.3, 2.2);
+      const roof = new THREE.Mesh(roofGeo, collisionMaterial);
+      roof.position.set(0, totalHeight + 0.5, 0);
+      roof.userData.isCollisionMesh = true;
+      groupRef.current.add(roof);
+      meshes.push(roof);
+    }
+
+    // Scaffolding collision meshes (if visible)
+    if (showScaffolding) {
+      const scaffoldPositions = [
+        [-1.2, -1.2],
+        [1.2, -1.2],
+        [-1.2, 1.2],
+        [1.2, 1.2],
+      ];
+
+      // Vertical poles
+      for (const [x, z] of scaffoldPositions) {
+        const poleGeo = new THREE.CylinderGeometry(0.08, 0.08, totalHeight + 1, 8);
+        const pole = new THREE.Mesh(poleGeo, collisionMaterial);
+        pole.position.set(x, totalHeight / 2 + 0.5, z);
+        pole.userData.isCollisionMesh = true;
+        groupRef.current.add(pole);
+        meshes.push(pole);
+      }
+
+      // Horizontal beams
+      const beamLevels = [0.5, 1.5, 2.5].slice(0, Math.ceil(totalHeight));
+      for (const y of beamLevels) {
+        // Front beam
+        const beamFrontGeo = new THREE.BoxGeometry(2.4, 0.1, 0.1);
+        const beamFront = new THREE.Mesh(beamFrontGeo, collisionMaterial);
+        beamFront.position.set(0, y, -1.2);
+        beamFront.userData.isCollisionMesh = true;
+        groupRef.current.add(beamFront);
+        meshes.push(beamFront);
+
+        // Back beam
+        const beamBack = new THREE.Mesh(beamFrontGeo, collisionMaterial);
+        beamBack.position.set(0, y, 1.2);
+        beamBack.userData.isCollisionMesh = true;
+        groupRef.current.add(beamBack);
+        meshes.push(beamBack);
+      }
+    }
+
+    collisionMeshesRef.current = meshes;
+
+    // Cleanup function
+    return () => {
+      meshes.forEach((mesh) => {
+        groupRef.current?.remove(mesh);
+        mesh.geometry.dispose();
+        (mesh.material as THREE.Material).dispose();
+      });
+    };
+  }, [stage, totalHeight, showRoof, showScaffolding]);
 
   return (
     <group ref={groupRef} position={position} onClick={onClick}>

@@ -13,6 +13,9 @@ export interface FirstPersonConfig {
   flightAscendSpeed: number;      // Vertical ascend speed (units/sec)
   flightDescendSpeed: number;     // Vertical descend speed (units/sec)
   flightHoverHeight: number;      // Minimum hover height above ground
+  // Step climbing configuration
+  maxStepHeight: number;          // Max step height player can climb (units)
+  enableStepClimbing: boolean;    // Enable/disable step climbing on collision
 }
 
 export const DEFAULT_FIRST_PERSON_CONFIG: FirstPersonConfig = {
@@ -28,6 +31,9 @@ export const DEFAULT_FIRST_PERSON_CONFIG: FirstPersonConfig = {
   flightAscendSpeed: 2.5,
   flightDescendSpeed: 3.0,
   flightHoverHeight: 0.75,        // ~0.75 units above ground
+  // Step climbing defaults
+  maxStepHeight: 0.5,             // Can step up 0.5 units (reasonable step height)
+  enableStepClimbing: true,       // Enable step climbing by default
 };
 
 // Key bindings for movement
@@ -375,12 +381,15 @@ export class FirstPersonController {
   }
 
   /**
-   * Resolve collisions using simple sphere vs AABB with slide
+   * Resolve collisions using simple sphere vs AABB with slide and step climbing
    */
   private resolveCollisions(desiredPosition: THREE.Vector3, meshes: THREE.Mesh[]): THREE.Vector3 {
     const result = desiredPosition.clone();
     const testPoint = result.clone();
     testPoint.y -= this.config.eyeHeight - 0.5; // Test at body center, not eye level
+
+    let collisionDetected = false;
+    let maxClimbableHeight = 0;
 
     for (const mesh of meshes) {
       if (!mesh.geometry.boundingBox) {
@@ -390,11 +399,30 @@ export class FirstPersonController {
       const box = mesh.geometry.boundingBox!.clone();
       box.applyMatrix4(mesh.matrixWorld);
 
-      // Expand box by collision radius
-      box.expandByScalar(this.collisionRadius);
+      // Expand box by collision radius for testing
+      const expandedBox = box.clone();
+      expandedBox.expandByScalar(this.collisionRadius);
 
-      if (box.containsPoint(testPoint)) {
-        // Find closest face and push out
+      if (expandedBox.containsPoint(testPoint)) {
+        collisionDetected = true;
+
+        // Check if we can step up onto this obstacle
+        if (this.config.enableStepClimbing) {
+          // Get the top of the collision box
+          const boxTop = box.max.y;
+          const currentFeetY = this.position.y - this.config.eyeHeight;
+          const heightDifference = boxTop - currentFeetY;
+
+          // If this obstacle is climbable, try to step up
+          if (heightDifference > 0 && heightDifference <= this.config.maxStepHeight) {
+            maxClimbableHeight = Math.max(maxClimbableHeight, heightDifference);
+            // Try moving forward with height adjustment
+            result.y = boxTop + this.config.eyeHeight + 0.01; // Small epsilon to clear the surface
+            continue; // Skip the normal collision response for this mesh
+          }
+        }
+
+        // Standard collision response: find closest face and push out
         const center = new THREE.Vector3();
         box.getCenter(center);
 
@@ -405,12 +433,26 @@ export class FirstPersonController {
         // Find which axis has smallest penetration
         const penetrationX = (size.x / 2) - Math.abs(toCenter.x);
         const penetrationZ = (size.z / 2) - Math.abs(toCenter.z);
+        const penetrationY = (size.y / 2) - Math.abs(toCenter.y);
 
-        // Push out along axis of least penetration (slide along walls)
-        if (penetrationX < penetrationZ) {
-          result.x = this.position.x; // Revert X movement
+        // Prefer sliding along horizontal planes for stairs/ramps
+        if (penetrationY < Math.min(penetrationX, penetrationZ)) {
+          // Hit from above or below - block vertical movement
+          if (toCenter.y > 0) {
+            // Hit from below - don't allow jumping through
+            result.y = this.position.y;
+          } else {
+            // Hit from above - stop upward movement but allow step climbing
+            if (!this.config.enableStepClimbing || maxClimbableHeight === 0) {
+              result.y = this.position.y;
+            }
+          }
+        } else if (penetrationX < penetrationZ) {
+          // Hit from side on X axis
+          result.x = this.position.x;
         } else {
-          result.z = this.position.z; // Revert Z movement
+          // Hit from side on Z axis
+          result.z = this.position.z;
         }
       }
     }
