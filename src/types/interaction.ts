@@ -98,7 +98,7 @@ export interface GridConfig {
 }
 
 export const DEFAULT_GRID_CONFIG: GridConfig = {
-  cellSize: 3,        // 3-unit cells for "large cells" across whole map
+  cellSize: 1,        // 1-unit cells (original size)
   minSize: 1,         // Minimum 1 cell (for small decor placements)
   maxSize: 100,       // Maximum 100 cells (for massive structures)
   snapThreshold: 0.5,
