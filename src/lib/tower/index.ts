@@ -27,8 +27,3 @@ export type { WallFace } from './CameraRelativeWallCuller';
 export { ThroneRoomBuilder } from './ThroneRoom';
 export type { ThroneRoomConfig, ThroneRoomRefs } from './ThroneRoom';
 export { DEFAULT_THRONE_ROOM_CONFIG } from './ThroneRoom';
-
-// Cottage (level 1)
-export { CottageBuilder } from './Cottage';
-export type { CottageConfig, CottageRefs } from './Cottage';
-export { DEFAULT_COTTAGE_CONFIG } from './Cottage';
