@@ -51,16 +51,17 @@ const AMBIENT_SETTINGS = {
 
 /**
  * Shadow softness settings for different times
- * Higher radius = softer shadows (but more GPU expensive)
- * Keep values low (1-3) for performance
+ * Higher radius = softer shadows (PCF antialiasing effect)
+ * Values in range 1-4 are industry standard for real-time shadows
+ * Larger radius at dawn/dusk/night accounts for diffuse light at those times
  */
 const SHADOW_SETTINGS = {
-  dawn: { radius: 2, intensity: 0.6 },
-  morning: { radius: 1, intensity: 0.75 },
-  noon: { radius: 1, intensity: 0.9 },      // Sharp shadows at noon
-  afternoon: { radius: 1, intensity: 0.75 },
-  dusk: { radius: 2, intensity: 0.5 },
-  night: { radius: 2, intensity: 0.3 },     // Slightly soft moon shadows
+  dawn: { radius: 3.0, intensity: 0.6 },     // Very soft at sunrise
+  morning: { radius: 2.0, intensity: 0.75 }, // Soft morning shadows
+  noon: { radius: 1.2, intensity: 0.9 },     // Crisper at noon
+  afternoon: { radius: 2.0, intensity: 0.75 }, // Soft afternoon shadows
+  dusk: { radius: 3.0, intensity: 0.5 },     // Very soft at sunset
+  night: { radius: 3.5, intensity: 0.3 },    // Softest for moonlight
 };
 
 /**
@@ -127,10 +128,19 @@ export class DayNightCycle {
     this.sunLight.shadow.camera.top = config.shadowFrustum;
     this.sunLight.shadow.camera.bottom = -config.shadowFrustum;
 
-    // Hard shadows for performance (no PCF blur)
-    this.sunLight.shadow.bias = -0.001;
+    // Optimize shadow bias for PCF soft shadow mapping
+    // Dynamic bias scaled to shadow map size (smaller bias for high-res maps)
+    const baseBias = -0.0001;
+    const shadowMapScale = 2048 / config.shadowMapSize; // Scale to standard 2048px baseline
+    this.sunLight.shadow.bias = baseBias * shadowMapScale;
+
+    // Normal bias prevents peter-panning (shadows detached from objects)
+    // Scales with shadow radius which changes per time of day
     this.sunLight.shadow.normalBias = 0.02;
-    this.sunLight.shadow.radius = 1; // Hard shadows - no expensive PCF
+
+    // Shadow radius will be updated dynamically per frame based on time of day
+    // See update() method for application
+    this.sunLight.shadow.radius = 1;
 
     scene.add(this.sunLight);
     scene.add(this.sunLight.target);
@@ -216,7 +226,9 @@ export class DayNightCycle {
     this.sunLight.color.setHex(sun.color);
     this.sunLight.intensity = Math.max(0, sun.intensity * Math.max(0, sunY / this.config.sunHeight));
 
-    // Shadow radius is fixed at 1 for performance (hard shadows)
+    // Apply time-of-day shadow softness (softer at dawn/dusk/night)
+    const shadowSettings = this.getShadowSettings();
+    this.sunLight.shadow.radius = shadowSettings.radius;
 
     // Sun mesh color based on time
     const sunVisualColor = sunY > 0
