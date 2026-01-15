@@ -293,7 +293,7 @@ export function GameLayout() {
 
       {/* Grid selection instructions - FPS style floating HUD */}
       {interactionMode === 'drawing' && (
-        <div className="absolute bottom-24 left-1/2 -translate-x-1/2 pointer-events-none">
+        <div className="absolute left-8 top-1/2 -translate-y-1/2 pointer-events-none">
           <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', textAlign: 'center' }}>
             {/* Commit instruction */}
             <div style={{
