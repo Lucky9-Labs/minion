@@ -10,8 +10,7 @@ import { CameraRelativeWallCuller } from '@/lib/tower';
 import { ContinuousTerrainBuilder, DEFAULT_CONTINUOUS_CONFIG } from '@/lib/terrain';
 import type { ExclusionZone } from '@/lib/terrain';
 import { createVillagePaths } from '@/lib/terrain/VillagePaths';
-import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
-import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
+import type { InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
 import { CameraController } from '@/lib/camera';
 import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall, OutlineEffect, FlightEffect } from '@/lib/effects';
@@ -141,6 +140,7 @@ export function SimpleScene({
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2());
   const terrainBuilderRef = useRef<ContinuousTerrainBuilder | null>(null);
+  const centerTerrainHeightRef = useRef<number>(0);
   const wallCullerRef = useRef<CameraRelativeWallCuller | null>(null);
   const buildingBoundsRef = useRef<BuildingBounds | null>(null);
   const dayNightCycleRef = useRef<DayNightCycle | null>(null);
@@ -534,41 +534,19 @@ export function SimpleScene({
     };
     renderer.domElement.addEventListener('wheel', handleWheel, { passive: false });
 
-    // === COZY COTTAGE (single larger room) ===
-    // Generate a single cozy cottage instead of multi-room compound
-    const layoutGenerator = new LayoutGenerator(42, 8); // seed 42, grid size 8 for one big room
-    const buildingLayout = layoutGenerator.generateCottage(); // Use cottage-specific generator
-
-    const roomMeshBuilder = new RoomMeshBuilder();
-    const buildingRefs = roomMeshBuilder.build(buildingLayout);
-
-    // Calculate building bounds for exclusion zone and collision detection
-    const layoutBounds = buildingLayout.bounds;
-    const buildingPadding = 2;
-    const buildingRadius = Math.max(
-      Math.abs(layoutBounds.maxX - layoutBounds.minX),
-      Math.abs(layoutBounds.maxZ - layoutBounds.minZ)
-    ) / 2 + buildingPadding;
-
-    buildingBoundsRef.current = {
-      minX: layoutBounds.minX - 0.5,
-      maxX: layoutBounds.maxX + 0.5,
-      minZ: layoutBounds.minZ - 0.5,
-      maxZ: layoutBounds.maxZ + 0.5,
-      floorY: 0.3,
-    };
-
-    // === CONTINUOUS TERRAIN with building exclusion zone ===
+    // === TERRAIN (no hardcoded buildings) ===
+    // Buildings are managed via projectStore, not hardcoded
     const terrainConfig = {
       ...DEFAULT_CONTINUOUS_CONFIG,
-      exclusionZones: [
-        { x: 0, z: 0, radius: buildingRadius + 3 } // Building area + margin
-      ] as ExclusionZone[],
+      exclusionZones: [] as ExclusionZone[],
     };
     const terrainBuilder = new ContinuousTerrainBuilder(terrainConfig);
     const terrain = terrainBuilder.build();
     scene.add(terrain);
     terrainBuilderRef.current = terrainBuilder;
+
+    // Get terrain height at center for positioning wizard and orb
+    centerTerrainHeightRef.current = terrainBuilder.getHeightAt(0, 0);
 
     // === FLOATING ISLAND EDGE (rocky cliffs around perimeter) ===
     // Find where the river exits the terrain for waterfall placement
@@ -616,17 +594,6 @@ export function SimpleScene({
     });
     scene.add(waterfall.getGroup());
     waterfallRef.current = waterfall;
-
-    // Position building on terrain (at center, which is flat)
-    const buildingY = terrainBuilder.getHeightAt(0, 0);
-    buildingRefs.root.position.y = buildingY;
-    scene.add(buildingRefs.root);
-
-    // Update floorY to include terrain height
-    buildingBoundsRef.current!.floorY = buildingY + 0.3;
-
-    // Store interior lights for day/night control
-    interiorLightsRef.current = buildingRefs.allLights;
 
     // Camera-relative wall culler - DISABLED for now (confusing behavior)
     // const wallCuller = new CameraRelativeWallCuller(camera);
@@ -820,7 +787,7 @@ export function SimpleScene({
     }
     wildlifeRef.current = wildlife;
 
-    // === MAGIC ORB (floating above building entrance) ===
+    // === MAGIC ORB (floating above center) ===
     // Small glowing orb as a beacon/waypoint
     const orbGeometry = new THREE.IcosahedronGeometry(0.5, 1);
     const orbMaterial = new THREE.MeshStandardMaterial({
@@ -832,13 +799,13 @@ export function SimpleScene({
       flatShading: true,
     });
     const orb = new THREE.Mesh(orbGeometry, orbMaterial);
-    orb.position.set(0, buildingY + 6, 0);
+    orb.position.set(0, centerTerrainHeightRef.current + 6, 0);
     orb.castShadow = true;
     scene.add(orb);
 
     // === PERMANENT WIZARD (always present, the player's avatar) ===
     const wizardInstance = createMinion({ species: 'wizard' });
-    wizardInstance.mesh.position.set(5, buildingY + 0.5, 8); // In open area outside building
+    wizardInstance.mesh.position.set(5, centerTerrainHeightRef.current + 0.5, 8); // In open area outside building
     wizardInstance.mesh.userData.isWizard = true;
     wizardInstance.mesh.castShadow = true;
     scene.add(wizardInstance.mesh);
@@ -847,7 +814,7 @@ export function SimpleScene({
     // Wizard wandering behavior
     const wizardBehavior = new WizardBehavior({
       wanderRadius: 10,
-      homePosition: new THREE.Vector3(5, buildingY + 0.5, 8),
+      homePosition: new THREE.Vector3(5, centerTerrainHeightRef.current + 0.5, 8),
       idleDurationMin: 2,
       idleDurationMax: 5,
       wanderSpeed: 1.2,
@@ -858,28 +825,9 @@ export function SimpleScene({
     let wizardIsInside = false;
 
     // Collect collision meshes for camera spring arm
+    // Note: Buildings are now managed via projectStore, so collision meshes
+    // will be collected from project buildings instead of hardcoded cottage
     const collisionMeshes: THREE.Mesh[] = [];
-    buildingRefs.rooms.forEach((roomRef) => {
-      // Add walls as collision objects
-      for (const dir of ['north', 'south', 'east', 'west'] as const) {
-        const wallGroup = roomRef.walls[dir];
-        if (wallGroup) {
-          wallGroup.traverse((child) => {
-            if (child instanceof THREE.Mesh) {
-              collisionMeshes.push(child);
-            }
-          });
-        }
-      }
-      // Add roof as collision
-      if (roomRef.roof) {
-        roomRef.roof.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            collisionMeshes.push(child);
-          }
-        });
-      }
-    });
     collisionMeshesRef.current = collisionMeshes;
     cameraController.setCollisionMeshes(collisionMeshes);
 
@@ -1387,7 +1335,7 @@ export function SimpleScene({
 
       // Animate magic orb - gentle floating rotation
       orb.rotation.y += 0.008;
-      orb.position.y = buildingY + 6 + Math.sin(elapsedTime * 0.8) * 0.3;
+      orb.position.y = centerTerrainHeightRef.current + 6 + Math.sin(elapsedTime * 0.8) * 0.3;
 
       // Animate cloud shadows - drift across terrain
       for (const cloud of cloudShadowsRef.current) {
@@ -1952,7 +1900,6 @@ export function SimpleScene({
       renderer.domElement.removeEventListener('wheel', handleWheel);
       controls.dispose();
       renderer.dispose();
-      roomMeshBuilder.dispose();
       terrainBuilderRef.current?.dispose();
       dayNightCycleRef.current?.dispose();
       torchManagerRef.current?.dispose();
@@ -2157,9 +2104,9 @@ export function SimpleScene({
         // Play teleport effect
         teleportEffectRef.current.playDisappear(oldPos);
 
-        // Teleport wizard back near cottage after delay
+        // Teleport wizard back to home position after delay
         setTimeout(() => {
-          wizard.mesh.position.set(0, 0.5, 2);
+          wizard.mesh.position.set(0, centerTerrainHeightRef.current + 0.5, 2);
           teleportEffectRef.current?.playAppear(wizard.mesh.position);
           wizardBehaviorRef.current?.exitConversation();
         }, 200);
