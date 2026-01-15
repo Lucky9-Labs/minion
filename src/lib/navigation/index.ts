@@ -11,3 +11,18 @@ export type { TowerNavConfig } from './NavGridBuilder';
 
 // Pathfinder
 export { Pathfinder } from './Pathfinder';
+
+// Elevated Surface Navigation (scaffolding, bridges, elevated walkways)
+export type {
+  ElevatedSurface,
+  ElevationConnection,
+  ElevatedNavPoint,
+} from './ElevatedSurface';
+export {
+  ElevatedSurfaceRegistry,
+  registerScaffoldingSurfaces,
+} from './ElevatedSurface';
+
+// Elevated Pathfinder
+export type { ElevatedPath } from './ElevatedPathfinder';
+export { ElevatedPathfinder } from './ElevatedPathfinder';

@@ -2,9 +2,11 @@
 
 import { useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import type { BuildingStage } from '@/types/project';
+import type { BuildingStage, OpenPR } from '@/types/project';
 import { AnimatedDoor } from './AnimatedDoor';
 import { StoneWall, PitchedWoodRoof, CornerQuoin, STONE_COLORS, WOOD_COLORS } from './materials/StoneMaterial';
+import { Scaffolding } from './Scaffolding';
+import { ScaffoldWorker } from '../ScaffoldWorker';
 
 interface CottageBuildingProps {
   stage: BuildingStage;
@@ -13,6 +15,8 @@ interface CottageBuildingProps {
   onClick?: () => void;
   isSelected?: boolean;
   buildingId?: string;
+  openPRs?: OpenPR[];
+  projectId?: string;
 }
 
 export function CottageBuilding({
@@ -22,12 +26,16 @@ export function CottageBuilding({
   onClick,
   isSelected,
   buildingId,
+  openPRs = [],
+  projectId,
 }: CottageBuildingProps) {
   const groupRef = useRef<THREE.Group>(null);
   const collisionMeshesRef = useRef<THREE.Mesh[]>([]);
   const baseHeight = 1.5;
   const floorHeight = 0.8;
   const totalHeight = baseHeight + Math.min(level - 1, 3) * floorHeight;
+  const buildingWidth = 1.8;
+  const buildingDepth = 1.8;
 
   const stageOpacity = {
     planning: 0.3,
@@ -333,35 +341,31 @@ export function CottageBuilding({
         </>
       )}
 
-      {/* Scaffolding */}
-      {showScaffolding && (
-        <group>
-          {/* Vertical poles */}
-          {[
-            [-1.2, 0, -1.2],
-            [1.2, 0, -1.2],
-            [-1.2, 0, 1.2],
-            [1.2, 0, 1.2],
-          ].map((pos, i) => (
-            <mesh key={i} position={[pos[0], totalHeight / 2 + 0.5, pos[2]]} castShadow>
-              <cylinderGeometry args={[0.05, 0.05, totalHeight + 1]} />
-              <meshStandardMaterial color={WOOD_COLORS.medium} />
-            </mesh>
+      {/* Scaffolding - renders when there are open PRs */}
+      {showScaffolding && openPRs.length > 0 && (
+        <>
+          <Scaffolding
+            buildingWidth={buildingWidth}
+            buildingDepth={buildingDepth}
+            floorCount={openPRs.length}
+            baseHeight={totalHeight + 0.2}
+            floorHeight={2}
+          />
+          {/* Worker minions on scaffolding - one per open PR */}
+          {openPRs.map((pr, index) => (
+            <ScaffoldWorker
+              key={pr.number}
+              prNumber={pr.number}
+              prTitle={pr.title}
+              floorIndex={index}
+              baseHeight={totalHeight + 0.2}
+              floorHeight={2}
+              buildingWidth={buildingWidth}
+              buildingDepth={buildingDepth}
+              projectId={projectId}
+            />
           ))}
-          {/* Horizontal beams */}
-          {[0.5, 1.5, 2.5].slice(0, Math.ceil(totalHeight)).map((y, i) => (
-            <group key={i}>
-              <mesh position={[0, y, -1.2]} castShadow>
-                <boxGeometry args={[2.4, 0.08, 0.08]} />
-                <meshStandardMaterial color={WOOD_COLORS.medium} />
-              </mesh>
-              <mesh position={[0, y, 1.2]} castShadow>
-                <boxGeometry args={[2.4, 0.08, 0.08]} />
-                <meshStandardMaterial color={WOOD_COLORS.medium} />
-              </mesh>
-            </group>
-          ))}
-        </group>
+        </>
       )}
 
       {/* Decorations for completed buildings */}

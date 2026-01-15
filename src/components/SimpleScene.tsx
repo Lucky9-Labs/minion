@@ -5,13 +5,13 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { useGameStore, useHasHydrated } from '@/store/gameStore';
 import { createMinion, knightHelmetConfig, getRegisteredSpecies } from '@/lib/minion';
+import { hardHatConfig } from '@/lib/minion/gear';
 import type { MinionInstance } from '@/lib/minion';
 import { CameraRelativeWallCuller } from '@/lib/tower';
 import { ContinuousTerrainBuilder, DEFAULT_CONTINUOUS_CONFIG } from '@/lib/terrain';
 import type { ExclusionZone } from '@/lib/terrain';
 import { createVillagePaths } from '@/lib/terrain/VillagePaths';
-import { LayoutGenerator, RoomMeshBuilder } from '@/lib/building';
-import type { BuildingRefs, RoomMeshRefs, InteriorLight } from '@/lib/building/RoomMeshBuilder';
+import type { InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
 import { CameraController } from '@/lib/camera';
 import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall, OutlineEffect, FlightEffect } from '@/lib/effects';
@@ -41,6 +41,13 @@ import {
   randomRange,
   performanceMonitor,
 } from '@/lib/optimizedUpdates';
+import {
+  ElevatedSurfaceRegistry,
+  ElevatedPathfinder,
+  registerScaffoldingSurfaces,
+  type ElevatedNavPoint,
+  type ElevatedPath,
+} from '@/lib/navigation';
 
 // Minion data for tracking position and movement
 interface MinionSceneData {
@@ -56,6 +63,14 @@ interface MinionSceneData {
   reactionIndicator: ReactionIndicator;
   personality: 'friendly' | 'cautious' | 'grumpy';
   selectionCrystal: THREE.Mesh; // Sims-style floating crystal above selected minion
+  isOnScaffolding: boolean; // Whether minion is working on scaffolding
+  scaffoldingWorkPhase: number; // Animation phase for hammering/working
+  // Elevated surface navigation
+  elevatedPath: ElevatedPath | null;
+  elevatedPathIndex: number;
+  elevatedCurrentPoint: ElevatedNavPoint | null;
+  scaffoldWorkTimer: number; // Time until next work pause
+  scaffoldIsWorking: boolean; // Currently doing work animation
 }
 
 // Wildlife (squirrels, rabbits) data
@@ -136,11 +151,14 @@ export function SimpleScene({
   const cameraControllerRef = useRef<CameraController | null>(null);
   const minionsRef = useRef<Map<string, MinionSceneData>>(new Map());
   const projectBuildingsRef = useRef<Map<string, ProjectBuildingMesh>>(new Map());
+  const elevatedSurfaceRegistryRef = useRef<ElevatedSurfaceRegistry>(new ElevatedSurfaceRegistry());
+  const elevatedPathfinderRef = useRef<ElevatedPathfinder | null>(null);
   const villagePathsRef = useRef<THREE.Group | null>(null);
   const wizardRef = useRef<MinionInstance | null>(null);
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const mouseRef = useRef<THREE.Vector2>(new THREE.Vector2());
   const terrainBuilderRef = useRef<ContinuousTerrainBuilder | null>(null);
+  const centerTerrainHeightRef = useRef<number>(0);
   const wallCullerRef = useRef<CameraRelativeWallCuller | null>(null);
   const buildingBoundsRef = useRef<BuildingBounds | null>(null);
   const dayNightCycleRef = useRef<DayNightCycle | null>(null);
@@ -173,6 +191,8 @@ export function SimpleScene({
 
   const hasHydrated = useHasHydrated();
   const minions = useGameStore((state) => state.minions);
+  const minionsDataRef = useRef(minions); // Ref to access current minions in animation loop
+  minionsDataRef.current = minions; // Keep ref updated
   const selectedMinionId = useGameStore((state) => state.selectedMinionId);
   const setSelectedMinion = useGameStore((state) => state.setSelectedMinion);
   const conversation = useGameStore((state) => state.conversation);
@@ -534,41 +554,19 @@ export function SimpleScene({
     };
     renderer.domElement.addEventListener('wheel', handleWheel, { passive: false });
 
-    // === COZY COTTAGE (single larger room) ===
-    // Generate a single cozy cottage instead of multi-room compound
-    const layoutGenerator = new LayoutGenerator(42, 8); // seed 42, grid size 8 for one big room
-    const buildingLayout = layoutGenerator.generateCottage(); // Use cottage-specific generator
-
-    const roomMeshBuilder = new RoomMeshBuilder();
-    const buildingRefs = roomMeshBuilder.build(buildingLayout);
-
-    // Calculate building bounds for exclusion zone and collision detection
-    const layoutBounds = buildingLayout.bounds;
-    const buildingPadding = 2;
-    const buildingRadius = Math.max(
-      Math.abs(layoutBounds.maxX - layoutBounds.minX),
-      Math.abs(layoutBounds.maxZ - layoutBounds.minZ)
-    ) / 2 + buildingPadding;
-
-    buildingBoundsRef.current = {
-      minX: layoutBounds.minX - 0.5,
-      maxX: layoutBounds.maxX + 0.5,
-      minZ: layoutBounds.minZ - 0.5,
-      maxZ: layoutBounds.maxZ + 0.5,
-      floorY: 0.3,
-    };
-
-    // === CONTINUOUS TERRAIN with building exclusion zone ===
+    // === TERRAIN (no hardcoded buildings) ===
+    // Buildings are managed via projectStore, not hardcoded
     const terrainConfig = {
       ...DEFAULT_CONTINUOUS_CONFIG,
-      exclusionZones: [
-        { x: 0, z: 0, radius: buildingRadius + 3 } // Building area + margin
-      ] as ExclusionZone[],
+      exclusionZones: [] as ExclusionZone[],
     };
     const terrainBuilder = new ContinuousTerrainBuilder(terrainConfig);
     const terrain = terrainBuilder.build();
     scene.add(terrain);
     terrainBuilderRef.current = terrainBuilder;
+
+    // Get terrain height at center for positioning wizard and orb
+    centerTerrainHeightRef.current = terrainBuilder.getHeightAt(0, 0);
 
     // === FLOATING ISLAND EDGE (rocky cliffs around perimeter) ===
     // Find where the river exits the terrain for waterfall placement
@@ -616,17 +614,6 @@ export function SimpleScene({
     });
     scene.add(waterfall.getGroup());
     waterfallRef.current = waterfall;
-
-    // Position building on terrain (at center, which is flat)
-    const buildingY = terrainBuilder.getHeightAt(0, 0);
-    buildingRefs.root.position.y = buildingY;
-    scene.add(buildingRefs.root);
-
-    // Update floorY to include terrain height
-    buildingBoundsRef.current!.floorY = buildingY + 0.3;
-
-    // Store interior lights for day/night control
-    interiorLightsRef.current = buildingRefs.allLights;
 
     // Camera-relative wall culler - DISABLED for now (confusing behavior)
     // const wallCuller = new CameraRelativeWallCuller(camera);
@@ -820,7 +807,7 @@ export function SimpleScene({
     }
     wildlifeRef.current = wildlife;
 
-    // === MAGIC ORB (floating above building entrance) ===
+    // === MAGIC ORB (floating above center) ===
     // Small glowing orb as a beacon/waypoint
     const orbGeometry = new THREE.IcosahedronGeometry(0.5, 1);
     const orbMaterial = new THREE.MeshStandardMaterial({
@@ -832,13 +819,13 @@ export function SimpleScene({
       flatShading: true,
     });
     const orb = new THREE.Mesh(orbGeometry, orbMaterial);
-    orb.position.set(0, buildingY + 6, 0);
+    orb.position.set(0, centerTerrainHeightRef.current + 6, 0);
     orb.castShadow = true;
     scene.add(orb);
 
     // === PERMANENT WIZARD (always present, the player's avatar) ===
     const wizardInstance = createMinion({ species: 'wizard' });
-    wizardInstance.mesh.position.set(5, buildingY + 0.5, 8); // In open area outside building
+    wizardInstance.mesh.position.set(5, centerTerrainHeightRef.current + 0.5, 8); // In open area outside building
     wizardInstance.mesh.userData.isWizard = true;
     wizardInstance.mesh.castShadow = true;
     scene.add(wizardInstance.mesh);
@@ -847,7 +834,7 @@ export function SimpleScene({
     // Wizard wandering behavior
     const wizardBehavior = new WizardBehavior({
       wanderRadius: 10,
-      homePosition: new THREE.Vector3(5, buildingY + 0.5, 8),
+      homePosition: new THREE.Vector3(5, centerTerrainHeightRef.current + 0.5, 8),
       idleDurationMin: 2,
       idleDurationMax: 5,
       wanderSpeed: 1.2,
@@ -858,28 +845,9 @@ export function SimpleScene({
     let wizardIsInside = false;
 
     // Collect collision meshes for camera spring arm
+    // Note: Buildings are now managed via projectStore, so collision meshes
+    // will be collected from project buildings instead of hardcoded cottage
     const collisionMeshes: THREE.Mesh[] = [];
-    buildingRefs.rooms.forEach((roomRef) => {
-      // Add walls as collision objects
-      for (const dir of ['north', 'south', 'east', 'west'] as const) {
-        const wallGroup = roomRef.walls[dir];
-        if (wallGroup) {
-          wallGroup.traverse((child) => {
-            if (child instanceof THREE.Mesh) {
-              collisionMeshes.push(child);
-            }
-          });
-        }
-      }
-      // Add roof as collision
-      if (roomRef.roof) {
-        roomRef.roof.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            collisionMeshes.push(child);
-          }
-        });
-      }
-    });
     collisionMeshesRef.current = collisionMeshes;
     cameraController.setCollisionMeshes(collisionMeshes);
 
@@ -1387,7 +1355,7 @@ export function SimpleScene({
 
       // Animate magic orb - gentle floating rotation
       orb.rotation.y += 0.008;
-      orb.position.y = buildingY + 6 + Math.sin(elapsedTime * 0.8) * 0.3;
+      orb.position.y = centerTerrainHeightRef.current + 6 + Math.sin(elapsedTime * 0.8) * 0.3;
 
       // Animate cloud shadows - drift across terrain
       for (const cloud of cloudShadowsRef.current) {
@@ -1813,6 +1781,174 @@ export function SimpleScene({
           return; // Skip normal movement logic
         }
 
+        // Handle scaffolding workers - walk around and periodically work
+        if (data.isOnScaffolding) {
+          const pathfinder = elevatedPathfinderRef.current;
+          // Debug: log scaffolding state every few seconds
+          if (Math.random() < 0.01) {
+            console.log('[Scaffold] Minion state:', data.minionId, 'isWorking:', data.scaffoldIsWorking, 'hasPath:', !!data.elevatedPath, 'hasPathfinder:', !!pathfinder, 'currentPoint:', data.elevatedCurrentPoint);
+          }
+
+          // Working state - hammer animation
+          if (data.scaffoldIsWorking) {
+            data.scaffoldingWorkPhase += deltaTime * 4; // Hammering speed
+            data.scaffoldWorkTimer -= deltaTime;
+
+            // Hammering animation on right arm
+            const refs = data.instance.refs;
+            if (refs.rightHand) {
+              const hammerAngle = Math.sin(data.scaffoldingWorkPhase) * 0.8;
+              refs.rightHand.rotation.x = -0.5 + hammerAngle;
+              refs.rightHand.rotation.z = -0.3;
+            }
+            if (refs.leftHand) {
+              refs.leftHand.rotation.x = -0.4;
+              refs.leftHand.rotation.z = 0.2;
+            }
+
+            // Body bob with hammering
+            const workBob = Math.sin(data.scaffoldingWorkPhase) * 0.1;
+            data.instance.mesh.position.set(
+              data.currentPosition.x,
+              data.currentPosition.y + workBob,
+              data.currentPosition.z
+            );
+            data.instance.mesh.rotation.x = 0.1;
+
+            // Done working - find new destination
+            if (data.scaffoldWorkTimer <= 0) {
+              data.scaffoldIsWorking = false;
+              data.elevatedPath = null;
+              // Reset arm positions
+              if (refs.rightHand) refs.rightHand.rotation.set(0, 0, 0);
+              if (refs.leftHand) refs.leftHand.rotation.set(0, 0, 0);
+              data.instance.mesh.rotation.x = 0;
+            }
+            return;
+          }
+
+          // Walking state - navigate on elevated surfaces
+          if (pathfinder && !data.elevatedPath) {
+            // Find a new destination on the scaffolding - use ref to get current data
+            const currentMinions = minionsDataRef.current;
+            const minion = currentMinions.find(m => m.id === data.minionId);
+
+            // Debug: log every few seconds
+            if (Math.random() < 0.005) {
+              console.log('[Scaffold] Looking for path. Minion found:', !!minion, 'projectId:', minion?.buildingAssignment?.projectId);
+            }
+
+            if (minion?.buildingAssignment?.projectId) {
+              const targetPoint = pathfinder.findRandomPointForParent(
+                minion.buildingAssignment.projectId
+              );
+
+              // Debug logging (always log when no target found)
+              if (!targetPoint) {
+                if (Math.random() < 0.01) {
+                  console.log('[Scaffold] No target point found for project:', minion.buildingAssignment.projectId);
+                  console.log('[Scaffold] Registry surfaces:', elevatedSurfaceRegistryRef.current.getAllSurfaces().map(s => s.id));
+                }
+              }
+
+              if (targetPoint && data.elevatedCurrentPoint) {
+                const path = pathfinder.findPath(data.elevatedCurrentPoint, targetPoint);
+                if (path) {
+                  data.elevatedPath = path;
+                  data.elevatedPathIndex = 0;
+                  console.log('[Scaffold] Path found with', path.points.length, 'waypoints');
+                } else {
+                  // Detailed debug logging
+                  console.log('[Scaffold] NO PATH - Start:', JSON.stringify(data.elevatedCurrentPoint));
+                  console.log('[Scaffold] NO PATH - Target:', JSON.stringify(targetPoint));
+                  console.log('[Scaffold] Surfaces:', elevatedSurfaceRegistryRef.current.getAllSurfaces().map(s => `${s.id}@y=${s.y}`).join(', '));
+                }
+              } else if (targetPoint && !data.elevatedCurrentPoint) {
+                // Initialize starting point - look up the surface the minion is on
+                // Minion Y includes standing offset, so check with tolerance
+                const foundSurface = elevatedSurfaceRegistryRef.current.getSurfaceAt(
+                  data.currentPosition.x,
+                  data.currentPosition.z,
+                  data.currentPosition.y - 0.3, // Remove standing offset to find surface
+                  0.5
+                );
+                console.log('[Scaffold] Initializing current point. Found surface:', foundSurface?.id || 'none');
+
+                data.elevatedCurrentPoint = {
+                  x: data.currentPosition.x,
+                  z: data.currentPosition.z,
+                  y: foundSurface ? foundSurface.y : data.currentPosition.y,
+                  surfaceId: foundSurface?.id || null,
+                  isStair: false,
+                };
+                const path = pathfinder.findPath(data.elevatedCurrentPoint, targetPoint);
+                if (path) {
+                  data.elevatedPath = path;
+                  data.elevatedPathIndex = 0;
+                  console.log('[Scaffold] Initial path found with', path.points.length, 'waypoints');
+                } else {
+                  console.log('[Scaffold] No initial path from', JSON.stringify(data.elevatedCurrentPoint), 'to', JSON.stringify(targetPoint));
+                }
+              }
+            }
+          }
+
+          // Follow path
+          if (data.elevatedPath && data.elevatedPathIndex < data.elevatedPath.points.length) {
+            const targetPoint = data.elevatedPath.points[data.elevatedPathIndex];
+            const dx = targetPoint.x - data.currentPosition.x;
+            const dz = targetPoint.z - data.currentPosition.z;
+            const dy = targetPoint.y - data.currentPosition.y;
+            const dist = Math.sqrt(dx * dx + dz * dz + dy * dy);
+
+            if (dist < 0.3) {
+              // Reached waypoint
+              data.elevatedPathIndex++;
+              data.elevatedCurrentPoint = targetPoint;
+
+              // Check if reached final destination
+              if (data.elevatedPathIndex >= data.elevatedPath.points.length) {
+                // Start working
+                data.scaffoldIsWorking = true;
+                data.scaffoldWorkTimer = 3.0 + Math.random() * 4.0; // Work 3-7 seconds
+                data.elevatedPath = null;
+              }
+            } else {
+              // Move toward target
+              const moveSpeed = data.speed * 0.6; // Slower on scaffolding
+              const moveAmount = Math.min(moveSpeed * deltaTime, dist);
+              const scale = moveAmount / dist;
+
+              data.currentPosition.x += dx * scale;
+              data.currentPosition.z += dz * scale;
+              data.currentPosition.y += dy * scale;
+
+              // Face movement direction
+              if (Math.abs(dx) > 0.01 || Math.abs(dz) > 0.01) {
+                data.instance.mesh.rotation.y = Math.atan2(dx, dz);
+              }
+
+              // Walking bob
+              const walkBob = Math.sin(elapsedTime * 8) * 0.05;
+              data.instance.mesh.position.set(
+                data.currentPosition.x,
+                data.currentPosition.y + walkBob,
+                data.currentPosition.z
+              );
+            }
+          } else {
+            // No path - idle bob
+            const bounce = Math.sin(elapsedTime * 2) * 0.03;
+            data.instance.mesh.position.set(
+              data.currentPosition.x,
+              data.currentPosition.y + bounce,
+              data.currentPosition.z
+            );
+          }
+
+          return; // Skip normal movement logic
+        }
+
         if (data.isMoving && data.targetPosition) {
           // Calculate direction to target (no allocation - inline math)
           const dx = data.targetPosition.x - data.currentPosition.x;
@@ -1952,7 +2088,6 @@ export function SimpleScene({
       renderer.domElement.removeEventListener('wheel', handleWheel);
       controls.dispose();
       renderer.dispose();
-      roomMeshBuilder.dispose();
       terrainBuilderRef.current?.dispose();
       dayNightCycleRef.current?.dispose();
       torchManagerRef.current?.dispose();
@@ -2094,6 +2229,31 @@ export function SimpleScene({
         const personalities: Array<'friendly' | 'cautious' | 'grumpy'> = ['friendly', 'cautious', 'grumpy'];
         const personality = personalities[index % personalities.length];
 
+        // Check if minion has building assignment (working on scaffolding)
+        const isOnScaffolding = !!minion.buildingAssignment?.isActive;
+
+        // If on scaffolding, position at scaffold position and equip hard hat
+        let initialElevatedPoint: ElevatedNavPoint | null = null;
+        if (isOnScaffolding && minion.buildingAssignment) {
+          const scaffoldPos = minion.buildingAssignment.scaffoldPosition;
+          startPos.set(scaffoldPos.x, scaffoldPos.y, scaffoldPos.z);
+          instance.mesh.position.copy(startPos);
+          // Equip hard hat instead of knight helmet
+          instance.equipGear(hardHatConfig);
+
+          // Initialize elevated navigation point
+          const surface = elevatedSurfaceRegistryRef.current.getSurfaceAt(
+            scaffoldPos.x, scaffoldPos.z, scaffoldPos.y, 1.0 // tolerance of 1.0 to find nearby surface
+          );
+          initialElevatedPoint = {
+            x: scaffoldPos.x,
+            z: scaffoldPos.z,
+            y: scaffoldPos.y,
+            surfaceId: surface?.id || null,
+            isStair: false,
+          };
+        }
+
         currentMinions.set(minion.id, {
           minionId: minion.id,
           instance,
@@ -2107,6 +2267,14 @@ export function SimpleScene({
           reactionIndicator,
           personality,
           selectionCrystal,
+          isOnScaffolding,
+          scaffoldingWorkPhase: Math.random() * Math.PI * 2, // Random start phase for variety
+          // Elevated navigation
+          elevatedPath: null,
+          elevatedPathIndex: 0,
+          elevatedCurrentPoint: initialElevatedPoint,
+          scaffoldWorkTimer: 2.0 + Math.random() * 3.0, // Start working after 2-5 seconds
+          scaffoldIsWorking: false,
         });
 
         // Register with interaction controller
@@ -2139,6 +2307,67 @@ export function SimpleScene({
       const isSelected = data.minionId === selectedMinionId;
       data.selectionCrystal.visible = isSelected;
     });
+
+    // Sync building assignments for existing minions
+    minions.forEach((minion) => {
+      const data = currentMinions.get(minion.id);
+      if (!data) return;
+
+      const shouldBeOnScaffolding = !!minion.buildingAssignment?.isActive;
+
+      // Check if scaffolding state changed
+      if (shouldBeOnScaffolding !== data.isOnScaffolding) {
+        data.isOnScaffolding = shouldBeOnScaffolding;
+
+        if (shouldBeOnScaffolding && minion.buildingAssignment) {
+          // Move to scaffolding position
+          const scaffoldPos = minion.buildingAssignment.scaffoldPosition;
+          data.currentPosition.set(scaffoldPos.x, scaffoldPos.y, scaffoldPos.z);
+          data.instance.mesh.position.copy(data.currentPosition);
+          data.isMoving = false;
+          data.targetPosition = null;
+          // Equip hard hat
+          data.instance.equipGear(hardHatConfig);
+
+          // Initialize elevated navigation point
+          // scaffoldPos.y includes standing offset (+0.3), so subtract it to find surface
+          const checkY = scaffoldPos.y - 0.3;
+          console.log('[Scaffold Sync] Checking at:', { x: scaffoldPos.x, z: scaffoldPos.z, y: checkY });
+          const allSurfaces = elevatedSurfaceRegistryRef.current.getAllSurfaces();
+          console.log('[Scaffold Sync] Available surfaces:', allSurfaces.slice(0, 4).map(s => ({
+            id: s.id, y: s.y,
+            bounds: { minX: s.bounds.minX.toFixed(1), maxX: s.bounds.maxX.toFixed(1), minZ: s.bounds.minZ.toFixed(1), maxZ: s.bounds.maxZ.toFixed(1) }
+          })));
+          const surface = elevatedSurfaceRegistryRef.current.getSurfaceAt(
+            scaffoldPos.x, scaffoldPos.z, checkY, 0.5
+          );
+          console.log('[Scaffold Sync] Init nav point. Found surface:', surface?.id || 'none', 'at y=', surface?.y);
+          data.elevatedCurrentPoint = {
+            x: scaffoldPos.x,
+            z: scaffoldPos.z,
+            y: surface ? surface.y : scaffoldPos.y, // Use surface Y for navigation
+            surfaceId: surface?.id || null,
+            isStair: false,
+          };
+          data.elevatedPath = null;
+          data.elevatedPathIndex = 0;
+          data.scaffoldIsWorking = false;
+          data.scaffoldWorkTimer = 2.0 + Math.random() * 3.0;
+        } else {
+          // Unequip hard hat and return to ground
+          data.instance.unequipGear('helmet');
+          const groundY = terrain.getHeightAt(data.currentPosition.x, data.currentPosition.z) + 0.1;
+          data.currentPosition.y = groundY;
+          data.instance.mesh.position.copy(data.currentPosition);
+
+          // Reset elevated navigation state
+          data.elevatedCurrentPoint = null;
+          data.elevatedPath = null;
+          data.elevatedPathIndex = 0;
+          data.scaffoldIsWorking = false;
+        }
+      }
+    });
   }, [hasHydrated, minions, selectedMinionId]);
 
   // Handle conversation phase changes
@@ -2157,9 +2386,9 @@ export function SimpleScene({
         // Play teleport effect
         teleportEffectRef.current.playDisappear(oldPos);
 
-        // Teleport wizard back near cottage after delay
+        // Teleport wizard back to home position after delay
         setTimeout(() => {
-          wizard.mesh.position.set(0, 0.5, 2);
+          wizard.mesh.position.set(0, centerTerrainHeightRef.current + 0.5, 2);
           teleportEffectRef.current?.playAppear(wizard.mesh.position);
           wizardBehaviorRef.current?.exitConversation();
         }, 200);
@@ -2220,6 +2449,22 @@ export function SimpleScene({
         currentBuildings.set(project.id, building);
         buildingsChanged = true;
 
+        // Register scaffolding surfaces for elevated navigation
+        if (project.building.stage === 'scaffolding' && project.openPRs?.length > 0) {
+          const baseY = terrain.getHeightAt(project.building.position.x, project.building.position.z);
+          registerScaffoldingSurfaces(
+            elevatedSurfaceRegistryRef.current,
+            project.id,
+            { x: project.building.position.x, z: project.building.position.z },
+            baseY // Pass terrain height so surfaces match minion positions
+          );
+          // Create/update pathfinder with updated registry
+          elevatedPathfinderRef.current = new ElevatedPathfinder(
+            elevatedSurfaceRegistryRef.current,
+            0.5 // grid size for pathfinding
+          );
+        }
+
         // Register with interaction controller
         interactionControllerRef.current?.registerBuilding(project.id, building.group, {
           name: project.name,
@@ -2233,6 +2478,8 @@ export function SimpleScene({
       if (!projects.find((p) => p.id === projectId)) {
         scene.remove(building.group);
         building.dispose();
+        // Unregister scaffolding surfaces
+        elevatedSurfaceRegistryRef.current.unregisterByParent(projectId);
         // Unregister from interaction controller
         interactionControllerRef.current?.unregisterEntity(projectId);
         currentBuildings.delete(projectId);
@@ -2273,6 +2520,97 @@ export function SimpleScene({
       }
     }
   }, [projects]);
+
+  // Auto-assign idle minions to scaffoldings when there are open PRs
+  useEffect(() => {
+    if (!terrainBuilderRef.current) return;
+
+    const terrain = terrainBuilderRef.current;
+    const assignMinionToBuilding = useGameStore.getState().assignMinionToBuilding;
+    const unassignMinionFromBuilding = useGameStore.getState().unassignMinionFromBuilding;
+
+    // Get all PRs that need workers
+    const prAssignments: Array<{
+      projectId: string;
+      prNumber: number;
+      position: { x: number; y: number; z: number };
+    }> = [];
+
+    for (const project of projects) {
+      // Only process scaffolding-stage buildings with open PRs
+      if (project.building.stage === 'scaffolding' && project.openPRs?.length > 0) {
+        const buildingPos = project.building.position;
+        const baseHeight = terrain.getHeightAt(buildingPos.x, buildingPos.z);
+
+        // Create positions for each PR on the scaffolding platforms
+        // Match the scaffold registration in ElevatedSurface.ts
+        const halfD = 2.5; // BASE_DEPTH / 2 from projectBuildings
+        const platformOffset = 1.0; // From registerScaffoldingSurfaces
+        const scaffoldPlatformY = [2.5, 5.0]; // Platform levels
+
+        project.openPRs.forEach((pr, index) => {
+          // Alternate between front and back platforms
+          const isFront = index % 2 === 0;
+          const floor = Math.min(Math.floor(index / 4), scaffoldPlatformY.length - 1); // 4 workers per floor (2 front, 2 back)
+          const xOffset = ((index % 2) - 0.5) * 1.5; // Spread along platform
+
+          prAssignments.push({
+            projectId: project.id,
+            prNumber: pr.number,
+            position: {
+              x: buildingPos.x + xOffset,
+              y: baseHeight + scaffoldPlatformY[floor] + 0.3, // On the platform
+              z: buildingPos.z + (isFront ? halfD + platformOffset : -(halfD + platformOffset)), // Front (+Z) or back (-Z)
+            },
+          });
+        });
+      }
+    }
+
+    // Find idle minions without building assignments
+    const idleMinions = minions.filter(
+      (m) => m.state === 'idle' && !m.buildingAssignment?.isActive
+    );
+
+    // Also unassign minions from PRs that no longer exist
+    const activePRKeys = new Set(
+      prAssignments.map((a) => `${a.projectId}-${a.prNumber}`)
+    );
+    minions.forEach((m) => {
+      if (m.buildingAssignment?.isActive) {
+        const key = `${m.buildingAssignment.projectId}-${m.buildingAssignment.prNumber}`;
+        if (!activePRKeys.has(key)) {
+          // PR was closed/merged, unassign minion
+          unassignMinionFromBuilding(m.id);
+        }
+      }
+    });
+
+    // Assign idle minions to unfilled PR slots
+    const assignedPRKeys = new Set(
+      minions
+        .filter((m) => m.buildingAssignment?.isActive)
+        .map((m) => `${m.buildingAssignment!.projectId}-${m.buildingAssignment!.prNumber}`)
+    );
+
+    let idleMinionIndex = 0;
+    for (const assignment of prAssignments) {
+      const key = `${assignment.projectId}-${assignment.prNumber}`;
+      // Skip if already assigned
+      if (assignedPRKeys.has(key)) continue;
+      // Skip if no more idle minions
+      if (idleMinionIndex >= idleMinions.length) break;
+
+      const minion = idleMinions[idleMinionIndex];
+      assignMinionToBuilding(
+        minion.id,
+        assignment.projectId,
+        assignment.prNumber,
+        assignment.position
+      );
+      idleMinionIndex++;
+    }
+  }, [projects, minions]);
 
   // Update selected project building highlight
   useEffect(() => {

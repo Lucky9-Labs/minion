@@ -16,6 +16,7 @@ import type {
   ConversationState,
   ConversationPhase,
   Wizard,
+  BuildingAssignment,
 } from '@/types/game';
 
 function generateId(): string {
@@ -28,6 +29,11 @@ interface GameStore extends GameState {
   updateMinionState: (minionId: string, state: Minion['state']) => void;
   updateMinionPosition: (minionId: string, position: { x: number; y: number; z: number }) => void;
   updateMinionPositionsBatch: (positions: Map<string, { x: number; y: number; z: number }>) => void;
+
+  // Building assignment actions
+  assignMinionToBuilding: (minionId: string, projectId: string, prNumber: number, scaffoldPosition: { x: number; y: number; z: number }) => void;
+  unassignMinionFromBuilding: (minionId: string) => void;
+  getMinionsForProject: (projectId: string) => Minion[];
 
   // Quest actions
   createQuest: (title: string, description: string, minionId: string) => Quest;
@@ -190,6 +196,46 @@ export const useGameStore = create<GameStore>()(
             return newPos ? { ...m, position: newPos } : m;
           }),
         }));
+      },
+
+      // Building assignment actions
+      assignMinionToBuilding: (minionId, projectId, prNumber, scaffoldPosition) => {
+        set((state) => ({
+          minions: state.minions.map((m) =>
+            m.id === minionId
+              ? {
+                  ...m,
+                  state: 'working' as MinionState,
+                  buildingAssignment: {
+                    projectId,
+                    prNumber,
+                    scaffoldPosition,
+                    isActive: true,
+                  },
+                }
+              : m
+          ),
+        }));
+      },
+
+      unassignMinionFromBuilding: (minionId) => {
+        set((state) => ({
+          minions: state.minions.map((m) =>
+            m.id === minionId
+              ? {
+                  ...m,
+                  state: 'idle' as MinionState,
+                  buildingAssignment: undefined,
+                }
+              : m
+          ),
+        }));
+      },
+
+      getMinionsForProject: (projectId) => {
+        return get().minions.filter(
+          (m) => m.buildingAssignment?.projectId === projectId && m.buildingAssignment?.isActive
+        );
       },
 
       createQuest: (title, description, minionId) => {

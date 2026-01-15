@@ -538,9 +538,11 @@ export function createProjectBuilding(
   chimney.castShadow = true;
   group.add(chimney);
 
-  // === SCAFFOLDING (if under construction) ===
-  if (isUnderConstruction) {
-    addScaffolding(group, BASE_WIDTH, BASE_DEPTH, totalWallHeight);
+  // === SCAFFOLDING (only if there are open PRs) ===
+  // Workers are rendered as actual minions with buildingAssignment, not here
+  const openPRCount = project.openPRs?.length || 0;
+  if (stage === 'scaffolding' && openPRCount > 0) {
+    addScaffolding(group, BASE_WIDTH, BASE_DEPTH, totalWallHeight, openPRCount);
   }
 
   // === DECORATED EXTRAS ===
@@ -750,7 +752,8 @@ function addScaffolding(
   group: THREE.Group,
   width: number,
   depth: number,
-  wallHeight: number
+  wallHeight: number,
+  openPRCount: number = 1
 ): void {
   const scaffoldMat = new THREE.MeshStandardMaterial({
     color: COLORS.scaffold,
@@ -760,43 +763,385 @@ function addScaffolding(
   const halfW = width / 2;
   const halfD = depth / 2;
 
-  // Vertical poles
-  const poleGeo = new THREE.CylinderGeometry(0.08, 0.1, wallHeight + 2, 6);
+  // Scaffolding now wraps around the building at multiple levels
+  // Height covers the full building plus extra for workers
+  const scaffoldHeight = Math.max(wallHeight, 6);
+
+  // Vertical poles at corners - extend full height
+  const poleGeo = new THREE.CylinderGeometry(0.08, 0.1, scaffoldHeight + 1, 6);
   const polePositions = [
-    [-halfW - 0.8, -halfD - 0.8],
-    [halfW + 0.8, -halfD - 0.8],
-    [-halfW - 0.8, halfD + 0.8],
-    [halfW + 0.8, halfD + 0.8],
+    [-halfW - 1.2, -halfD - 1.2],
+    [halfW + 1.2, -halfD - 1.2],
+    [-halfW - 1.2, halfD + 1.2],
+    [halfW + 1.2, halfD + 1.2],
   ];
 
   polePositions.forEach(([px, pz]) => {
     const pole = new THREE.Mesh(poleGeo, scaffoldMat);
-    pole.position.set(px, (wallHeight + 2) / 2 + 0.2, pz);
+    pole.position.set(px, scaffoldHeight / 2 + 0.5, pz);
     pole.castShadow = true;
     group.add(pole);
   });
 
-  // Horizontal planks at intervals
-  const plankGeoX = new THREE.BoxGeometry(width + 2, 0.1, 0.3);
-  const plankGeoZ = new THREE.BoxGeometry(0.3, 0.1, depth + 2);
+  // Add intermediate poles for longer spans
+  const midPoleGeo = new THREE.CylinderGeometry(0.06, 0.08, scaffoldHeight + 1, 6);
+  const midPolePositions = [
+    [0, -halfD - 1.2],
+    [0, halfD + 1.2],
+    [-halfW - 1.2, 0],
+    [halfW + 1.2, 0],
+  ];
+  midPolePositions.forEach(([px, pz]) => {
+    const pole = new THREE.Mesh(midPoleGeo, scaffoldMat);
+    pole.position.set(px, scaffoldHeight / 2 + 0.5, pz);
+    pole.castShadow = true;
+    group.add(pole);
+  });
 
-  const levels = Math.ceil(wallHeight / 2.5);
-  for (let i = 1; i <= levels; i++) {
-    const y = i * 2.5 + 0.2;
+  // Horizontal planks and platforms at multiple levels
+  const plankGeoX = new THREE.BoxGeometry(width + 2.8, 0.1, 0.25);
+  const plankGeoZ = new THREE.BoxGeometry(0.25, 0.1, depth + 2.8);
 
-    [-halfD - 0.8, halfD + 0.8].forEach((pz) => {
+  // Platform planks for workers to stand on - wider platforms
+  const platformGeoFront = new THREE.BoxGeometry(width + 2, 0.12, 1.2);
+  const platformGeoSide = new THREE.BoxGeometry(1.2, 0.12, depth + 2);
+
+  // Create scaffolding at fixed heights where workers will be placed
+  const scaffoldLevels = [2.5, 5.0]; // Match worker Y positions
+
+  scaffoldLevels.forEach((y) => {
+    // Horizontal beams on all sides
+    [-halfD - 1.2, halfD + 1.2].forEach((pz) => {
       const plank = new THREE.Mesh(plankGeoX, scaffoldMat);
       plank.position.set(0, y, pz);
       plank.castShadow = true;
       group.add(plank);
     });
 
-    [-halfW - 0.8, halfW + 0.8].forEach((px) => {
+    [-halfW - 1.2, halfW + 1.2].forEach((px) => {
       const plank = new THREE.Mesh(plankGeoZ, scaffoldMat);
       plank.position.set(px, y, 0);
       plank.castShadow = true;
       group.add(plank);
     });
+
+    // Worker platforms on front and sides
+    const platformFront = new THREE.Mesh(platformGeoFront, scaffoldMat);
+    platformFront.position.set(0, y, halfD + 1.0);
+    platformFront.receiveShadow = true;
+    group.add(platformFront);
+
+    const platformBack = new THREE.Mesh(platformGeoFront, scaffoldMat);
+    platformBack.position.set(0, y, -halfD - 1.0);
+    platformBack.receiveShadow = true;
+    group.add(platformBack);
+
+    const platformLeft = new THREE.Mesh(platformGeoSide, scaffoldMat);
+    platformLeft.position.set(-halfW - 1.0, y, 0);
+    platformLeft.receiveShadow = true;
+    group.add(platformLeft);
+
+    const platformRight = new THREE.Mesh(platformGeoSide, scaffoldMat);
+    platformRight.position.set(halfW + 1.0, y, 0);
+    platformRight.receiveShadow = true;
+    group.add(platformRight);
+
+    // Safety rails
+    const railGeoX = new THREE.BoxGeometry(width + 2, 0.06, 0.06);
+    const railGeoZ = new THREE.BoxGeometry(0.06, 0.06, depth + 2);
+
+    const railFront = new THREE.Mesh(railGeoX, scaffoldMat);
+    railFront.position.set(0, y + 0.8, halfD + 1.5);
+    group.add(railFront);
+
+    const railBack = new THREE.Mesh(railGeoX, scaffoldMat);
+    railBack.position.set(0, y + 0.8, -halfD - 1.5);
+    group.add(railBack);
+
+    const railLeft = new THREE.Mesh(railGeoZ, scaffoldMat);
+    railLeft.position.set(-halfW - 1.5, y + 0.8, 0);
+    group.add(railLeft);
+
+    const railRight = new THREE.Mesh(railGeoZ, scaffoldMat);
+    railRight.position.set(halfW + 1.5, y + 0.8, 0);
+    group.add(railRight);
+  });
+
+  // Add diagonal bracing for visual interest
+  const braceLength = Math.sqrt(4 + scaffoldHeight * scaffoldHeight) * 0.4;
+  const braceGeo = new THREE.CylinderGeometry(0.04, 0.04, braceLength, 4);
+  const braceAngle = Math.atan2(scaffoldHeight * 0.4, 2);
+
+  // Front diagonal braces
+  const brace1 = new THREE.Mesh(braceGeo, scaffoldMat);
+  brace1.position.set(-halfW * 0.5, scaffoldHeight * 0.4, halfD + 1.2);
+  brace1.rotation.z = braceAngle;
+  group.add(brace1);
+
+  const brace2 = new THREE.Mesh(braceGeo, scaffoldMat);
+  brace2.position.set(halfW * 0.5, scaffoldHeight * 0.4, halfD + 1.2);
+  brace2.rotation.z = -braceAngle;
+  group.add(brace2);
+
+  // Add stairs connecting ground to platforms and between levels
+  addScaffoldStairs(group, halfW, halfD, scaffoldMat);
+}
+
+// Add stairs to scaffolding for minion navigation
+function addScaffoldStairs(
+  group: THREE.Group,
+  halfW: number,
+  halfD: number,
+  scaffoldMat: THREE.MeshStandardMaterial
+): void {
+  const STAIR_WIDTH = 0.8;
+  const STEP_HEIGHT = 0.25;
+  const STEP_DEPTH = 0.4;
+  const STEPS_PER_LEVEL = 10; // 10 steps * 0.25 = 2.5 units per level
+
+  // Stair levels: ground to L1 (2.5), L1 to L2 (5.0)
+  const levels = [
+    { baseY: 0, levelIndex: 0 },     // Ground to L1
+    { baseY: 2.5, levelIndex: 1 },   // L1 to L2
+  ];
+
+  levels.forEach(({ baseY, levelIndex }) => {
+    // Alternate left/right for visual variety and to not overlap
+    const xOffset = levelIndex % 2 === 0 ? halfW - STAIR_WIDTH / 2 : -halfW + STAIR_WIDTH / 2;
+    const stairBaseZ = halfD + 1.6; // Start just beyond front platform
+
+    // Create steps
+    for (let step = 0; step < STEPS_PER_LEVEL; step++) {
+      const stepY = baseY + step * STEP_HEIGHT + STEP_HEIGHT / 2;
+      const stepZ = stairBaseZ + step * STEP_DEPTH;
+
+      // Step tread (the flat part you walk on)
+      const treadGeo = new THREE.BoxGeometry(STAIR_WIDTH, 0.08, STEP_DEPTH + 0.05);
+      const tread = new THREE.Mesh(treadGeo, scaffoldMat);
+      tread.position.set(xOffset, stepY, stepZ);
+      tread.receiveShadow = true;
+      tread.castShadow = true;
+      group.add(tread);
+    }
+
+    // Stair stringers (side supports)
+    const stringerLength = Math.sqrt(
+      (STEPS_PER_LEVEL * STEP_DEPTH) ** 2 +
+      (STEPS_PER_LEVEL * STEP_HEIGHT) ** 2
+    );
+    const stringerAngle = Math.atan2(
+      STEPS_PER_LEVEL * STEP_HEIGHT,
+      STEPS_PER_LEVEL * STEP_DEPTH
+    );
+
+    const stringerGeo = new THREE.BoxGeometry(0.08, 0.15, stringerLength);
+    [-1, 1].forEach((side) => {
+      const stringer = new THREE.Mesh(stringerGeo, scaffoldMat);
+      stringer.position.set(
+        xOffset + side * (STAIR_WIDTH / 2 + 0.04),
+        baseY + (STEPS_PER_LEVEL * STEP_HEIGHT) / 2,
+        stairBaseZ + (STEPS_PER_LEVEL * STEP_DEPTH) / 2
+      );
+      stringer.rotation.x = -stringerAngle;
+      stringer.castShadow = true;
+      group.add(stringer);
+    });
+
+    // Handrails along the stairs
+    const railLength = stringerLength + 0.4;
+    const railGeo = new THREE.CylinderGeometry(0.03, 0.03, railLength, 6);
+    [-1, 1].forEach((side) => {
+      const rail = new THREE.Mesh(railGeo, scaffoldMat);
+      rail.position.set(
+        xOffset + side * (STAIR_WIDTH / 2 + 0.08),
+        baseY + (STEPS_PER_LEVEL * STEP_HEIGHT) / 2 + 0.5,
+        stairBaseZ + (STEPS_PER_LEVEL * STEP_DEPTH) / 2
+      );
+      rail.rotation.x = Math.PI / 2 - stringerAngle;
+      group.add(rail);
+    });
+
+    // Vertical posts at bottom and top of handrail
+    const postGeo = new THREE.CylinderGeometry(0.03, 0.04, 0.8, 6);
+    [-1, 1].forEach((side) => {
+      // Bottom post
+      const bottomPost = new THREE.Mesh(postGeo, scaffoldMat);
+      bottomPost.position.set(
+        xOffset + side * (STAIR_WIDTH / 2 + 0.08),
+        baseY + 0.4,
+        stairBaseZ
+      );
+      group.add(bottomPost);
+
+      // Top post
+      const topPost = new THREE.Mesh(postGeo, scaffoldMat);
+      topPost.position.set(
+        xOffset + side * (STAIR_WIDTH / 2 + 0.08),
+        baseY + STEPS_PER_LEVEL * STEP_HEIGHT + 0.4,
+        stairBaseZ + STEPS_PER_LEVEL * STEP_DEPTH
+      );
+      group.add(topPost);
+    });
+
+    // Landing platform at top of stairs (connects to main scaffold platform)
+    const landingGeo = new THREE.BoxGeometry(STAIR_WIDTH + 0.2, 0.1, 0.6);
+    const landing = new THREE.Mesh(landingGeo, scaffoldMat);
+    landing.position.set(
+      xOffset,
+      baseY + STEPS_PER_LEVEL * STEP_HEIGHT,
+      stairBaseZ + STEPS_PER_LEVEL * STEP_DEPTH + 0.2
+    );
+    landing.receiveShadow = true;
+    group.add(landing);
+  });
+}
+
+// Add worker minions on scaffolding platforms - visible at building level
+function addScaffoldWorkers(
+  group: THREE.Group,
+  width: number,
+  depth: number,
+  wallHeight: number,
+  openPRCount: number
+): void {
+  const halfW = width / 2;
+  const halfD = depth / 2;
+  const workerScale = 1.5; // Large for visibility
+
+  // Goblin worker colors - VERY bright and distinct
+  const skinMat = new THREE.MeshStandardMaterial({
+    color: 0x66BB6A, // Bright green skin
+    flatShading: true,
+    emissive: 0x4CAF50,
+    emissiveIntensity: 0.4,
+  });
+  const overallsMat = new THREE.MeshStandardMaterial({
+    color: 0x8D6E63, // Lighter brown overalls
+    flatShading: true,
+    emissive: 0x5D4037,
+    emissiveIntensity: 0.2,
+  });
+  const hatMat = new THREE.MeshStandardMaterial({
+    color: 0xFFEB3B, // Bright yellow hard hat
+    flatShading: true,
+    emissive: 0xFFD600,
+    emissiveIntensity: 0.7, // Very bright glow
+  });
+
+  // Place workers at GROUND LEVEL around the scaffolding exterior
+  // This makes them highly visible from the isometric camera angle
+  // Workers face inward toward the building (like they're working on it)
+  const workerPositions = [
+    // Front side workers (+Z) - MOST visible from isometric camera
+    { x: -2.0, y: 0.0, z: halfD + 2.0, rot: Math.PI },    // Ground level, front left
+    { x: 2.0, y: 0.0, z: halfD + 2.0, rot: Math.PI },     // Ground level, front right
+    { x: 0, y: 0.0, z: halfD + 2.5, rot: Math.PI },       // Ground level, front center
+    // Right side workers (+X) - also visible
+    { x: halfW + 2.0, y: 0.0, z: 1.5, rot: -Math.PI / 2 },  // Ground level, right side
+    { x: halfW + 2.0, y: 0.0, z: -1.0, rot: -Math.PI / 2 }, // Ground level, right side back
+    // Left side workers (-X)
+    { x: -halfW - 2.0, y: 0.0, z: 0, rot: Math.PI / 2 },    // Ground level, left side
+    // Workers ON scaffolding platforms (upper levels)
+    { x: 0, y: 2.5, z: halfD + 1.8, rot: Math.PI },        // On scaffold platform
+  ];
+
+  // Create workers based on PR count - each PR adds workers
+  const totalWorkers = Math.min(openPRCount * 2, workerPositions.length);
+
+  for (let i = 0; i < totalWorkers; i++) {
+    const pos = workerPositions[i];
+
+    const worker = new THREE.Group();
+    worker.position.set(pos.x, pos.y, pos.z);
+    worker.rotation.y = pos.rot;
+    worker.scale.setScalar(workerScale);
+    worker.userData.isScaffoldWorker = true;
+    worker.userData.prIndex = Math.floor(i / 2);
+
+    // Head - larger and brighter
+    const headGeo = new THREE.SphereGeometry(0.35, 8, 6);
+    const head = new THREE.Mesh(headGeo, skinMat);
+    head.position.y = 1.0;
+    head.castShadow = true;
+    worker.add(head);
+
+    // Pointy ears (goblin style)
+    const earGeo = new THREE.ConeGeometry(0.1, 0.3, 4);
+    const leftEar = new THREE.Mesh(earGeo, skinMat);
+    leftEar.position.set(-0.3, 1.1, 0);
+    leftEar.rotation.z = -0.6;
+    worker.add(leftEar);
+
+    const rightEar = new THREE.Mesh(earGeo, skinMat);
+    rightEar.position.set(0.3, 1.1, 0);
+    rightEar.rotation.z = 0.6;
+    worker.add(rightEar);
+
+    // Body (torso)
+    const bodyGeo = new THREE.CylinderGeometry(0.2, 0.28, 0.55, 6);
+    const body = new THREE.Mesh(bodyGeo, overallsMat);
+    body.position.y = 0.5;
+    body.castShadow = true;
+    worker.add(body);
+
+    // Arms reaching out (working pose)
+    const armGeo = new THREE.CylinderGeometry(0.06, 0.08, 0.4, 5);
+    const armMat = skinMat;
+
+    const leftArm = new THREE.Mesh(armGeo, armMat);
+    leftArm.position.set(-0.3, 0.6, 0.15);
+    leftArm.rotation.x = -0.8; // Reaching forward
+    leftArm.rotation.z = 0.3;
+    worker.add(leftArm);
+
+    const rightArm = new THREE.Mesh(armGeo, armMat);
+    rightArm.position.set(0.3, 0.6, 0.15);
+    rightArm.rotation.x = -0.8;
+    rightArm.rotation.z = -0.3;
+    worker.add(rightArm);
+
+    // Legs
+    const legGeo = new THREE.CylinderGeometry(0.08, 0.1, 0.35, 5);
+    const leftLeg = new THREE.Mesh(legGeo, overallsMat);
+    leftLeg.position.set(-0.1, 0.12, 0);
+    leftLeg.castShadow = true;
+    worker.add(leftLeg);
+
+    const rightLeg = new THREE.Mesh(legGeo, overallsMat);
+    rightLeg.position.set(0.1, 0.12, 0);
+    rightLeg.castShadow = true;
+    worker.add(rightLeg);
+
+    // Hard hat - bright yellow, very visible
+    const hatGeo = new THREE.SphereGeometry(0.28, 8, 4, 0, Math.PI * 2, 0, Math.PI / 2);
+    const hat = new THREE.Mesh(hatGeo, hatMat);
+    hat.position.y = 1.25;
+    hat.castShadow = true;
+    worker.add(hat);
+
+    // Hat brim
+    const brimGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.04, 10);
+    const brim = new THREE.Mesh(brimGeo, hatMat);
+    brim.position.y = 1.15;
+    worker.add(brim);
+
+    // Add a tool (hammer) to make it look like they're working
+    const hammerHandleMat = new THREE.MeshStandardMaterial({ color: 0x8B4513, flatShading: true });
+    const hammerHeadMat = new THREE.MeshStandardMaterial({ color: 0x555555, flatShading: true });
+
+    const handleGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.35, 5);
+    const handle = new THREE.Mesh(handleGeo, hammerHandleMat);
+    handle.position.set(0.35, 0.7, 0.25);
+    handle.rotation.x = -0.5;
+    handle.rotation.z = -0.3;
+    worker.add(handle);
+
+    const hammerHeadGeo = new THREE.BoxGeometry(0.12, 0.08, 0.08);
+    const hammerHead = new THREE.Mesh(hammerHeadGeo, hammerHeadMat);
+    hammerHead.position.set(0.42, 0.85, 0.35);
+    worker.add(hammerHead);
+
+    group.add(worker);
   }
 }
 
