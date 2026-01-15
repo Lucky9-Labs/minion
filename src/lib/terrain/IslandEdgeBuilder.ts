@@ -16,6 +16,12 @@ export interface IslandEdgeConfig {
   waterfallAngle: number;
   /** Width of waterfall gap (in radians) */
   waterfallWidth: number;
+  /** Angle of southside for height reduction (radians, default: π/2 = true south) */
+  southsideAngle?: number;
+  /** Width of transition zone around southside (in radians, default: 1.0) */
+  southsideTransitionWidth?: number;
+  /** Height multiplier at southside (0-1, default: 0.3 = 30% of normal height) */
+  southsideHeightMultiplier?: number;
 }
 
 export const DEFAULT_ISLAND_EDGE_CONFIG: IslandEdgeConfig = {
@@ -25,6 +31,9 @@ export const DEFAULT_ISLAND_EDGE_CONFIG: IslandEdgeConfig = {
   bowlSegments: 12,
   waterfallAngle: Math.PI * 0.75,
   waterfallWidth: 0.4,
+  southsideAngle: Math.PI / 2,
+  southsideTransitionWidth: 1.0,
+  southsideHeightMultiplier: 0.3,
 };
 
 /**
@@ -160,8 +169,11 @@ export class IslandEdgeBuilder {
       const sampleZ = Math.sin(angle) * islandRadius * 0.8;
       const baseY = getHeightAt(sampleX, sampleZ);
 
+      // Calculate height reduction for southside
+      const heightMult = this.getHeightMultiplierForAngle(angle);
+
       // Create 2-4 rocks per point at varying radii for dense coverage
-      const rockLayers = 2 + Math.floor(Math.random() * 2);
+      const rockLayers = Math.max(1, Math.floor((2 + Math.floor(Math.random() * 2)) * heightMult));
 
       for (let layer = 0; layer < rockLayers; layer++) {
         // Vary radius - some rocks inside edge, some at edge, some slightly outside
@@ -170,12 +182,12 @@ export class IslandEdgeBuilder {
         const x = Math.cos(angle) * edgeRadius;
         const z = Math.sin(angle) * edgeRadius;
 
-        // Scale based on layer - outer rocks taller
-        const rockScale = 0.8 + layer * 0.3 + Math.random() * 0.4;
+        // Scale based on layer - outer rocks taller, reduced toward southside
+        const rockScale = (0.8 + layer * 0.3 + Math.random() * 0.4) * heightMult;
         const rock = this.buildSimpleRock(rimHeight * rockScale);
 
         // Position with height variation
-        const heightOffset = layer * rimHeight * 0.2;
+        const heightOffset = layer * rimHeight * 0.2 * heightMult;
 
         rock.position.set(
           x + (Math.random() - 0.5) * 2,
@@ -205,7 +217,7 @@ export class IslandEdgeBuilder {
 
     // Create a ring of connected wall segments - taller and thicker
     const segments = 32;
-    const wallHeight = rimHeight * 1.2; // Taller wall
+    const baseWallHeight = rimHeight * 1.2; // Taller wall
     const wallThickness = 8; // Thicker wall
 
     for (let i = 0; i < segments; i++) {
@@ -220,6 +232,9 @@ export class IslandEdgeBuilder {
 
       // Create wall segment as a box
       const segmentLength = (2 * Math.PI * islandRadius) / segments + 4;
+      const midAngle = (angle + nextAngle) / 2;
+      const wallHeightMult = this.getHeightMultiplierForAngle(midAngle);
+      const wallHeight = baseWallHeight * wallHeightMult;
       const geometry = new THREE.BoxGeometry(segmentLength, wallHeight, wallThickness);
 
       // Color - darker rocky tone
@@ -233,7 +248,6 @@ export class IslandEdgeBuilder {
       const segment = new THREE.Mesh(geometry, material);
 
       // Position at edge - slightly outside terrain
-      const midAngle = (angle + nextAngle) / 2;
       const x = Math.cos(midAngle) * islandRadius * 1.02;
       const z = Math.sin(midAngle) * islandRadius * 1.02;
 
@@ -258,7 +272,10 @@ export class IslandEdgeBuilder {
       if (normalizedDiff < waterfallWidth * 0.5) continue;
 
       const segmentLength = (2 * Math.PI * islandRadius) / segments + 4;
-      const skirtHeight = cliffDepth * 0.3;
+      const midAngle = (angle + nextAngle) / 2;
+      const skirtHeightMult = this.getHeightMultiplierForAngle(midAngle);
+      const baseSkirtHeight = cliffDepth * 0.3;
+      const skirtHeight = baseSkirtHeight * skirtHeightMult;
       const geometry = new THREE.BoxGeometry(segmentLength, skirtHeight, wallThickness * 1.5);
 
       const color = new THREE.Color().setHSL(0.07, 0.25, 0.18 + Math.random() * 0.05);
@@ -269,7 +286,6 @@ export class IslandEdgeBuilder {
       });
 
       const skirt = new THREE.Mesh(geometry, material);
-      const midAngle = (angle + nextAngle) / 2;
       const x = Math.cos(midAngle) * islandRadius * 1.03;
       const z = Math.sin(midAngle) * islandRadius * 1.03;
 
@@ -313,6 +329,30 @@ export class IslandEdgeBuilder {
 
       group.add(rock);
     }
+  }
+
+  /**
+   * Calculate height multiplier based on angle relative to southside
+   * Returns 1.0 for northern areas, gradually decreasing to southsideHeightMultiplier at south
+   */
+  private getHeightMultiplierForAngle(angle: number): number {
+    const southsideAngle = this.config.southsideAngle ?? (Math.PI / 2);
+    const transitionWidth = this.config.southsideTransitionWidth ?? 1.0;
+    const minMultiplier = this.config.southsideHeightMultiplier ?? 0.3;
+
+    // Calculate angular distance to southside (with wraparound handling)
+    let angleDiff = Math.abs(angle - southsideAngle);
+    angleDiff = Math.min(angleDiff, Math.PI * 2 - angleDiff);
+
+    // If within transition zone, apply smooth interpolation
+    if (angleDiff < transitionWidth) {
+      // Linear interpolation from full height (1.0) to minimum (minMultiplier)
+      const t = angleDiff / transitionWidth;
+      return 1.0 - t * (1.0 - minMultiplier);
+    }
+
+    // Outside transition: full height
+    return 1.0;
   }
 
   /**
