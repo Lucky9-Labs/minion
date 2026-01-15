@@ -6,3 +6,6 @@ export type { ReactionType, ReactionIndicatorConfig } from './ReactionIndicator'
 
 export { Waterfall, DEFAULT_WATERFALL_CONFIG } from './Waterfall';
 export type { WaterfallConfig } from './Waterfall';
+
+export { FlightEffect, DEFAULT_FLIGHT_CONFIG } from './FlightEffect';
+export type { FlightEffectConfig } from './FlightEffect';
