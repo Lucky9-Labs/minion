@@ -8,6 +8,7 @@ import { useProjectStore } from '@/store/projectStore';
 import { useGameStore } from '@/store/gameStore';
 import { Building } from './Building';
 import { MinionEntity } from './MinionEntity';
+import { GolemEntity } from './GolemEntity';
 import { VillageGround } from './VillageGround';
 
 interface VillageSceneProps {
@@ -22,7 +23,7 @@ export function VillageScene({
   selectedProjectId,
 }: VillageSceneProps) {
   const { projects, scanProjects, isScanning } = useProjectStore();
-  const { minions } = useGameStore();
+  const { minions, golems } = useGameStore();
   const [cameraDistance, setCameraDistance] = useState(20);
 
   // Initial scan and polling
@@ -170,6 +171,11 @@ export function VillageScene({
           key={minion.id}
           minion={{ ...minion, position: { x: position[0], y: position[1], z: position[2] } }}
         />
+      ))}
+
+      {/* Golems */}
+      {golems.map((golem) => (
+        <GolemEntity key={golem.id} golem={golem} />
       ))}
 
       {/* Loading indicator */}

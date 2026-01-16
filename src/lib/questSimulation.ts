@@ -92,3 +92,64 @@ export function getRandomEvent(type: 'flavor' | 'modifier' | 'social'): string {
   const events = NARRATIVE_EVENTS[type];
   return events[Math.floor(Math.random() * events.length)];
 }
+
+// Hook for golem movement - moves golems toward their target positions
+export function useGolemMovement() {
+  const animationRef = useRef<number | null>(null);
+  const golems = useGameStore((state) => state.golems);
+  const updateGolemPosition = useGameStore((state) => state.updateGolemPosition);
+  const updateGolemState = useGameStore((state) => state.updateGolemState);
+
+  useEffect(() => {
+    const golemsWithTargets = golems.filter((g) => g.targetPosition);
+
+    const animate = () => {
+      golemsWithTargets.forEach((golem) => {
+        if (!golem.targetPosition) return;
+
+        const currentPos = golem.position;
+        const targetPos = golem.targetPosition;
+
+        // Slower lerp for heavy golem movement
+        const lerpFactor = 0.005;
+        const newX = currentPos.x + (targetPos.x - currentPos.x) * lerpFactor;
+        const newY = currentPos.y + (targetPos.y - currentPos.y) * lerpFactor;
+        const newZ = currentPos.z + (targetPos.z - currentPos.z) * lerpFactor;
+
+        // Check if close enough to target
+        const distSq =
+          (targetPos.x - newX) ** 2 +
+          (targetPos.y - newY) ** 2 +
+          (targetPos.z - newZ) ** 2;
+
+        if (distSq < 0.01) {
+          // Arrived at target
+          updateGolemPosition(golem.id, targetPos);
+          updateGolemState(golem.id, 'idle');
+        } else if (
+          Math.abs(newX - currentPos.x) > 0.001 ||
+          Math.abs(newY - currentPos.y) > 0.001 ||
+          Math.abs(newZ - currentPos.z) > 0.001
+        ) {
+          updateGolemPosition(golem.id, { x: newX, y: newY, z: newZ });
+          // Ensure golem is in traveling state while moving
+          if (golem.state !== 'traveling') {
+            updateGolemState(golem.id, 'traveling');
+          }
+        }
+      });
+
+      animationRef.current = requestAnimationFrame(animate);
+    };
+
+    if (golemsWithTargets.length > 0) {
+      animationRef.current = requestAnimationFrame(animate);
+    }
+
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
+    };
+  }, [golems, updateGolemPosition, updateGolemState]);
+}

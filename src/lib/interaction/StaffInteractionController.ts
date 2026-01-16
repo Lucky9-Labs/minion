@@ -39,6 +39,7 @@ interface StaffInteractionCallbacks {
   onModeChange?: (mode: InteractionMode) => void;
   onStaffStateChange?: (state: StaffState) => void;
   onEntityThrown?: (thrown: ThrownEntity) => void;
+  onSpawnGolem?: (position: { x: number; y: number; z: number }) => void;
 }
 
 export class StaffInteractionController {
@@ -580,6 +581,13 @@ export class StaffInteractionController {
           this.foundationDrawer.startDrawing(target.position);
           this.setMode('drawing');
           return; // Don't set to idle
+        }
+        break;
+
+      case 'spawn_golem':
+        if (target?.type === 'ground') {
+          const pos = target.position;
+          this.callbacks.onSpawnGolem?.({ x: pos.x, y: pos.y, z: pos.z });
         }
         break;
 

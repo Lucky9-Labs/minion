@@ -17,6 +17,8 @@ import type {
   ConversationPhase,
   Wizard,
   BuildingAssignment,
+  Golem,
+  GolemState,
 } from '@/types/game';
 
 function generateId(): string {
@@ -34,6 +36,17 @@ interface GameStore extends GameState {
   assignMinionToBuilding: (minionId: string, projectId: string, prNumber: number, scaffoldPosition: { x: number; y: number; z: number }) => void;
   unassignMinionFromBuilding: (minionId: string) => void;
   getMinionsForProject: (projectId: string) => Minion[];
+
+  // Golem actions
+  addGolem: (name: string) => Golem;
+  removeGolem: (id: string) => void;
+  updateGolemPosition: (id: string, position: { x: number; y: number; z: number }) => void;
+  updateGolemState: (id: string, state: GolemState) => void;
+  setGolemTarget: (id: string, target: { x: number; y: number; z: number } | undefined) => void;
+  selectedGolemId: string | null;
+  setSelectedGolem: (id: string | null) => void;
+  possessedGolemId: string | null;
+  possessGolem: (id: string | null) => void;
 
   // Quest actions
   createQuest: (title: string, description: string, minionId: string) => Quest;
@@ -128,6 +141,7 @@ const initialState: GameState = {
   },
   wizard: defaultWizard,
   minions: [starterMinion],
+  golems: [],
   quests: [],
   artifacts: [],
   postcards: [],
@@ -149,6 +163,8 @@ export const useGameStore = create<GameStore>()(
     (set, get) => ({
       ...initialState,
       selectedMinionId: null,
+      selectedGolemId: null,
+      possessedGolemId: null,
       conversation: initialConversationState,
       cameraMode: 'isometric' as const,
       viewMode: 'isometric' as const,
@@ -236,6 +252,75 @@ export const useGameStore = create<GameStore>()(
         return get().minions.filter(
           (m) => m.buildingAssignment?.projectId === projectId && m.buildingAssignment?.isActive
         );
+      },
+
+      // Golem actions
+      addGolem: (name) => {
+        const golem: Golem = {
+          id: generateId(),
+          name,
+          position: { x: 0, y: 0, z: 0 },
+          state: 'idle',
+          createdAt: Date.now(),
+        };
+        set((state) => ({ golems: [...state.golems, golem] }));
+        return golem;
+      },
+
+      removeGolem: (id) => {
+        set((state) => ({
+          golems: state.golems.filter((g) => g.id !== id),
+          selectedGolemId: state.selectedGolemId === id ? null : state.selectedGolemId,
+          possessedGolemId: state.possessedGolemId === id ? null : state.possessedGolemId,
+        }));
+      },
+
+      updateGolemPosition: (id, position) => {
+        set((state) => ({
+          golems: state.golems.map((g) =>
+            g.id === id ? { ...g, position } : g
+          ),
+        }));
+      },
+
+      updateGolemState: (id, newState) => {
+        set((state) => ({
+          golems: state.golems.map((g) =>
+            g.id === id ? { ...g, state: newState } : g
+          ),
+        }));
+      },
+
+      setGolemTarget: (id, target) => {
+        set((state) => ({
+          golems: state.golems.map((g) =>
+            g.id === id ? { ...g, targetPosition: target } : g
+          ),
+        }));
+      },
+
+      setSelectedGolem: (id) => {
+        set({ selectedGolemId: id });
+      },
+
+      possessGolem: (id) => {
+        const state = get();
+        if (id) {
+          // Enter possession mode
+          set({
+            possessedGolemId: id,
+            selectedGolemId: id,
+            cameraMode: 'firstPerson',
+            viewMode: 'firstPerson',
+          });
+        } else {
+          // Exit possession mode
+          set({
+            possessedGolemId: null,
+            cameraMode: 'isometric',
+            viewMode: 'isometric',
+          });
+        }
       },
 
       createQuest: (title, description, minionId) => {
@@ -532,7 +617,7 @@ export const useGameStore = create<GameStore>()(
       },
 
       resetGame: () => {
-        set({ ...initialState, selectedMinionId: null, conversation: initialConversationState, cameraMode: 'isometric', viewMode: 'isometric', loadedInteriors: [] });
+        set({ ...initialState, selectedMinionId: null, selectedGolemId: null, possessedGolemId: null, conversation: initialConversationState, cameraMode: 'isometric', viewMode: 'isometric', loadedInteriors: [] });
       },
     }),
     {
@@ -545,10 +630,16 @@ export const useGameStore = create<GameStore>()(
         if (!merged.minions || merged.minions.length === 0) {
           merged.minions = [starterMinion];
         }
+        // Initialize golems array if missing
+        if (!merged.golems) {
+          merged.golems = [];
+        }
         // Ensure wizard state exists
         if (!merged.wizard) {
           merged.wizard = defaultWizard;
         }
+        // Reset possession state on reload
+        merged.possessedGolemId = null;
         return merged;
       },
       onRehydrateStorage: () => {
