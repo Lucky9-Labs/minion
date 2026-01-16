@@ -588,7 +588,7 @@ export function SimpleScene({
       waterfallWidth: 0.5,
       southsideAngle: Math.PI / 2,
       southsideTransitionWidth: 1.2,
-      southsideHeightMultiplier: 0.05,
+      southsideHeightMultiplier: 0.01,
     });
     const islandEdge = islandEdgeBuilder.build((x, z) => terrainBuilder.getHeightAt(x, z));
     scene.add(islandEdge);
@@ -620,7 +620,7 @@ export function SimpleScene({
     waterfallRef.current = waterfall;
 
     // === PORTAL GATEWAY (at true south) ===
-    const portalZ = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2 * 0.65; // At south edge, visible
+    const portalZ = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2 * 0.85; // At map edge
     const portalY = terrainBuilder.getHeightAt(0, portalZ);
     const portalGateway = new PortalGateway();
     const portalMesh = portalGateway.getMesh();
