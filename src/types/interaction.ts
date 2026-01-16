@@ -61,6 +61,7 @@ export const BUILDING_MENU_OPTIONS: MenuOption[] = [
 
 export const GROUND_MENU_OPTIONS: MenuOption[] = [
   { id: 'build', label: 'New Building', icon: '🏗️', description: 'Draw foundation' },
+  { id: 'spawn_golem', label: 'Summon Golem', icon: '🗿', description: 'Summon a golem here' },
   { id: 'cancel', label: 'Cancel', icon: '✕', description: 'Close menu' },
 ];
 
