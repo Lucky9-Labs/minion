@@ -586,9 +586,8 @@ export function SimpleScene({
       bowlSegments: 20,
       waterfallAngle,
       waterfallWidth: 0.5,
-      southsideAngle: Math.PI / 2,
-      southsideTransitionWidth: 1.2,
-      southsideHeightMultiplier: 0.01,
+      portalAngle: Math.PI / 2, // True south
+      portalWidth: 0.18, // ~5 units wide with margin
     });
     const islandEdge = islandEdgeBuilder.build((x, z) => terrainBuilder.getHeightAt(x, z));
     scene.add(islandEdge);
