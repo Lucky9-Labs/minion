@@ -70,6 +70,18 @@ export function InteractionHUD({
           </div>
         </div>
       )}
+
+      {/* Moving mode indicator */}
+      {mode === 'moving' && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-50 pointer-events-none">
+          <div className="bg-black/70 backdrop-blur-sm rounded-lg px-4 py-2 text-white">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">🏗️</span>
+              <span className="text-sm">Moving building - click to place • right-click to cancel</span>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

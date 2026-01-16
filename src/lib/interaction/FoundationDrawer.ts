@@ -10,6 +10,8 @@ interface GridCell {
   mesh: THREE.Mesh;
 }
 
+export type FoundationDrawerMode = 'idle' | 'drawing' | 'moving';
+
 export class FoundationDrawer {
   private config: GridConfig;
   private selectedCells: Set<string> = new Set();
@@ -22,10 +24,18 @@ export class FoundationDrawer {
   private cellMeshes: Map<string, GridCell> = new Map();
   private isSelecting: boolean = false;
 
+  // Mode tracking
+  private mode: FoundationDrawerMode = 'idle';
+
+  // Move mode state
+  private moveGridRadius: number = 7; // 15x15 grid (7 cells each direction)
+  private moveGridCenter: THREE.Vector3 = new THREE.Vector3();
+
   // Materials
   private selectedCellMaterial: THREE.MeshBasicMaterial;
   private hoveredCellMaterial: THREE.MeshBasicMaterial;
   private defaultCellMaterial: THREE.MeshBasicMaterial;
+  private moveGridCellMaterial: THREE.MeshBasicMaterial;
 
   // Height map function for terrain following
   private getHeightAt: (x: number, z: number) => number;
@@ -66,6 +76,15 @@ export class FoundationDrawer {
       color: 0xffffff,
       transparent: true,
       opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+
+    // Material for move mode grid cells (visible base grid)
+    this.moveGridCellMaterial = new THREE.MeshBasicMaterial({
+      color: 0x8b5cf6,
+      transparent: true,
+      opacity: 0.15,
       side: THREE.DoubleSide,
       depthWrite: false,
     });
@@ -364,6 +383,89 @@ export class FoundationDrawer {
     return this.group;
   }
 
+  getMode(): FoundationDrawerMode {
+    return this.mode;
+  }
+
+  // === MOVE MODE METHODS ===
+
+  /**
+   * Enter move mode - shows localized grid around the given position
+   */
+  enterMoveMode(centerPos: THREE.Vector3): void {
+    this.mode = 'moving';
+    this.moveGridCenter.copy(centerPos);
+    this.createLocalizedMoveGrid(centerPos);
+  }
+
+  /**
+   * Update the move grid position as cursor moves
+   */
+  updateMoveGrid(cursorPos: THREE.Vector3): void {
+    if (this.mode !== 'moving') return;
+
+    const distance = cursorPos.distanceTo(this.moveGridCenter);
+    // Recenter grid when cursor moves more than 3 cells away from center
+    if (distance > this.config.cellSize * 3) {
+      this.moveGridCenter.copy(cursorPos);
+      this.createLocalizedMoveGrid(cursorPos);
+    }
+  }
+
+  /**
+   * Exit move mode - clear grid and reset state
+   */
+  exitMoveMode(): void {
+    this.mode = 'idle';
+    this.clearAllCells();
+    this.gridHelper.visible = false;
+  }
+
+  /**
+   * Get snapped grid position for a world position
+   */
+  getSnappedPosition(worldPos: THREE.Vector3): THREE.Vector3 {
+    const snapped = this.snapToGrid(worldPos);
+    return this.getWorldPosFromGrid(snapped.gridX, snapped.gridY);
+  }
+
+  private createLocalizedMoveGrid(center: THREE.Vector3): void {
+    // Clear existing cells
+    this.clearAllCells();
+
+    // Snap center to grid
+    const snapped = this.snapToGrid(center);
+    const centerGridX = snapped.gridX;
+    const centerGridY = snapped.gridY;
+
+    // Position grid helper at center
+    const cellPos = this.getWorldPosFromGrid(centerGridX, centerGridY);
+    this.gridHelper.position.copy(cellPos);
+    this.gridHelper.visible = true;
+
+    // Create grid cells in radius around center
+    for (let dx = -this.moveGridRadius; dx <= this.moveGridRadius; dx++) {
+      for (let dy = -this.moveGridRadius; dy <= this.moveGridRadius; dy++) {
+        const gridX = centerGridX + dx;
+        const gridY = centerGridY + dy;
+        const cell = this.createGridCell(gridX, gridY);
+        // Use move grid material for visible base grid
+        cell.mesh.material = this.moveGridCellMaterial;
+      }
+    }
+  }
+
+  private clearAllCells(): void {
+    // Remove all cell meshes from group
+    for (const cell of this.cellMeshes.values()) {
+      this.group.remove(cell.mesh);
+      cell.mesh.geometry.dispose();
+    }
+    this.cellMeshes.clear();
+    this.selectedCells.clear();
+    this.hoveredCell = null;
+  }
+
   dispose(): void {
     this.gridHelper.geometry.dispose();
     (this.gridHelper.material as THREE.Material).dispose();
@@ -377,6 +479,7 @@ export class FoundationDrawer {
     this.selectedCellMaterial.dispose();
     this.hoveredCellMaterial.dispose();
     this.defaultCellMaterial.dispose();
+    this.moveGridCellMaterial.dispose();
 
     this.cellMeshes.clear();
   }

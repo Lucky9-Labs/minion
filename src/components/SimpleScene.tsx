@@ -26,6 +26,9 @@ import {
   type ProjectBuildingMesh,
 } from '@/lib/projectBuildings';
 import { FirstPersonHands } from '@/lib/FirstPersonHands';
+import { GolemFirstPersonHands } from '@/lib/GolemFirstPersonHands';
+import { GolemCameraController } from '@/lib/camera';
+import { createGolem, updateGolemAnimation, type GolemInstance } from '@/lib/golem';
 import { StaffInteractionController } from '@/lib/interaction';
 import type { ThrownEntity } from '@/lib/interaction/StaffInteractionController';
 import type { InteractionMode, MenuOption, DrawnFoundation } from '@/types/interaction';
@@ -71,6 +74,14 @@ interface MinionSceneData {
   elevatedCurrentPoint: ElevatedNavPoint | null;
   scaffoldWorkTimer: number; // Time until next work pause
   scaffoldIsWorking: boolean; // Currently doing work animation
+}
+
+// Golem scene data for vanilla Three.js rendering
+interface GolemSceneData {
+  golemId: string;
+  instance: GolemInstance;
+  currentPosition: THREE.Vector3;
+  state: 'idle' | 'traveling' | 'stomping';
 }
 
 // Wildlife (squirrels, rabbits) data
@@ -153,6 +164,7 @@ export function SimpleScene({
   const controlsRef = useRef<OrbitControls | null>(null);
   const cameraControllerRef = useRef<CameraController | null>(null);
   const minionsRef = useRef<Map<string, MinionSceneData>>(new Map());
+  const golemsSceneRef = useRef<Map<string, GolemSceneData>>(new Map());
   const projectBuildingsRef = useRef<Map<string, ProjectBuildingMesh>>(new Map());
   const elevatedSurfaceRegistryRef = useRef<ElevatedSurfaceRegistry>(new ElevatedSurfaceRegistry());
   const elevatedPathfinderRef = useRef<ElevatedPathfinder | null>(null);
@@ -182,6 +194,11 @@ export function SimpleScene({
   const interactionControllerRef = useRef<StaffInteractionController | null>(null);
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
   const isFirstPersonRef = useRef<boolean>(false);
+  // Golem possession mode refs
+  const golemHandsRef = useRef<GolemFirstPersonHands | null>(null);
+  const golemCameraControllerRef = useRef<GolemCameraController | null>(null);
+  const isGolemPossessedRef = useRef<boolean>(false);
+  const golemMeshRef = useRef<THREE.Group | null>(null);
   const outlineEffectRef = useRef<OutlineEffect | null>(null);
   const lastDeltaUpdateRef = useRef<number>(0);
   const thrownMinionsRef = useRef<Map<string, ThrownMinionState>>(new Map());
@@ -203,6 +220,16 @@ export function SimpleScene({
   const exitConversation = useGameStore((state) => state.exitConversation);
   const setConversationPhase = useGameStore((state) => state.setConversationPhase);
   const transitionToMinion = useGameStore((state) => state.transitionToMinion);
+
+  // Golem state
+  const golems = useGameStore((state) => state.golems);
+  const golemsDataRef = useRef(golems);
+  golemsDataRef.current = golems;
+  const possessedGolemId = useGameStore((state) => state.possessedGolemId);
+  const possessedGolemIdRef = useRef(possessedGolemId);
+  possessedGolemIdRef.current = possessedGolemId;
+  const possessGolem = useGameStore((state) => state.possessGolem);
+  const addGolem = useGameStore((state) => state.addGolem);
 
   // Project store
   const { projects, scanProjects } = useProjectStore();
@@ -961,6 +988,17 @@ export function SimpleScene({
       onBuildingAesthetic: (buildingId) => {
         onProjectClick?.(buildingId);
       },
+      onBuildingMoveStart: (buildingId) => {
+        console.log('Building move started:', buildingId);
+      },
+      onBuildingMoveCommit: (buildingId, newPosition) => {
+        // Update store with new position
+        useProjectStore.getState().updateBuildingPosition(buildingId, newPosition);
+        console.log('Building moved:', buildingId, 'to', newPosition);
+      },
+      onBuildingMoveCancel: (buildingId) => {
+        console.log('Building move cancelled:', buildingId);
+      },
       onFoundationComplete: (foundation) => {
         onFoundationComplete?.(foundation);
       },
@@ -1019,6 +1057,14 @@ export function SimpleScene({
             bounceCount: 0,
           });
         }
+      },
+      onSpawnGolem: (position) => {
+        // Summon a new golem at the targeted ground position
+        const golemNames = ['Craghorn', 'Boulderfist', 'Stoneguard', 'Rockmaw', 'Graniteclaw'];
+        const randomName = golemNames[Math.floor(Math.random() * golemNames.length)];
+        const golem = addGolem(randomName);
+        // Update position to where user clicked
+        useGameStore.getState().updateGolemPosition(golem.id, position);
       },
     });
 
@@ -1084,13 +1130,21 @@ export function SimpleScene({
 
       // Forward input to first person controller when in first person mode
       if (isFirstPersonRef.current) {
-        fpController.handleKeyDown(event);
+        if (isGolemPossessedRef.current && golemCameraControllerRef.current) {
+          golemCameraControllerRef.current.handleKeyDown(event);
+        } else {
+          fpController.handleKeyDown(event);
+        }
       }
     }
 
     function handleKeyUp(event: KeyboardEvent) {
       if (isFirstPersonRef.current) {
-        fpController.handleKeyUp(event);
+        if (isGolemPossessedRef.current && golemCameraControllerRef.current) {
+          golemCameraControllerRef.current.handleKeyUp(event);
+        } else {
+          fpController.handleKeyUp(event);
+        }
       }
     }
 
@@ -1112,11 +1166,18 @@ export function SimpleScene({
           }
         } else {
           // Normal camera movement
-          fpController.handleMouseMove(event);
-
-          // Apply sway to hands
-          if (firstPersonHandsRef.current) {
-            firstPersonHandsRef.current.setSway(event.movementX, event.movementY);
+          if (isGolemPossessedRef.current && golemCameraControllerRef.current) {
+            golemCameraControllerRef.current.handleMouseMove(event);
+            // Apply sway to golem hands
+            if (golemHandsRef.current) {
+              golemHandsRef.current.setSway(event.movementX, event.movementY);
+            }
+          } else {
+            fpController.handleMouseMove(event);
+            // Apply sway to wizard staff hands
+            if (firstPersonHandsRef.current) {
+              firstPersonHandsRef.current.setSway(event.movementX, event.movementY);
+            }
           }
 
           // Forward to interaction controller
@@ -1562,12 +1623,26 @@ export function SimpleScene({
 
         wasWizardFlyingRef.current = isFlying;
 
-        // Update first person hands animation
-        if (firstPersonHandsRef.current) {
+        // Update first person hands animation (wizard staff)
+        if (firstPersonHandsRef.current && !isGolemPossessedRef.current) {
           const isMoving = fpController.isMoving();
           const speed = fpController.getVelocity().length() / 5; // Normalize to 0-1ish
           firstPersonHandsRef.current.setBobbing(isMoving, speed);
           firstPersonHandsRef.current.update(deltaTime, elapsedTime);
+        }
+
+        // Update golem camera and hands when possessed
+        if (isGolemPossessedRef.current && golemCameraControllerRef.current) {
+          golemCameraControllerRef.current.update(deltaTime, elapsedTime);
+
+          // Update golem hands animation
+          if (golemHandsRef.current) {
+            const isMoving = golemCameraControllerRef.current.isMoving();
+            const stepPhase = golemCameraControllerRef.current.getStepPhase();
+            golemHandsRef.current.setBobbing(isMoving, 1);
+            golemHandsRef.current.setStepPhase(stepPhase);
+            golemHandsRef.current.update(deltaTime, elapsedTime);
+          }
         }
 
         // Update interaction controller (targeting, force grab physics, etc.)
@@ -2086,6 +2161,19 @@ export function SimpleScene({
         }
       });
 
+      // Update golem animations
+      golemsSceneRef.current.forEach((data) => {
+        // Skip possessed golem (handled by golem camera controller)
+        if (possessedGolemIdRef.current === data.golemId) return;
+
+        updateGolemAnimation(
+          data.instance,
+          data.state,
+          elapsedTime,
+          data.currentPosition.y
+        );
+      });
+
       // Update wall culler with character-inside state - DISABLED
       // if (wallCullerRef.current) {
       //   wallCullerRef.current.setCharacterInside(anyCharacterInside);
@@ -2438,6 +2526,52 @@ export function SimpleScene({
     });
   }, [hasHydrated, minions, selectedMinionId]);
 
+  // Sync golems with store
+  useEffect(() => {
+    if (!hasHydrated || !sceneRef.current || !terrainBuilderRef.current) return;
+
+    const scene = sceneRef.current;
+    const terrain = terrainBuilderRef.current;
+    const currentGolems = golemsSceneRef.current;
+
+    // Add new golems
+    golems.forEach((golem) => {
+      if (!currentGolems.has(golem.id)) {
+        const instance = createGolem();
+
+        // Use golem's stored position
+        const startY = terrain.getHeightAt(golem.position.x, golem.position.z) + 0.1;
+        instance.mesh.position.set(golem.position.x, startY, golem.position.z);
+        instance.mesh.userData.golemId = golem.id;
+
+        scene.add(instance.mesh);
+
+        currentGolems.set(golem.id, {
+          golemId: golem.id,
+          instance,
+          currentPosition: new THREE.Vector3(golem.position.x, startY, golem.position.z),
+          state: golem.state,
+        });
+      } else {
+        // Update existing golem position if it changed in store
+        const data = currentGolems.get(golem.id)!;
+        const targetY = terrain.getHeightAt(golem.position.x, golem.position.z) + 0.1;
+        data.currentPosition.set(golem.position.x, targetY, golem.position.z);
+        data.instance.mesh.position.copy(data.currentPosition);
+        data.state = golem.state;
+      }
+    });
+
+    // Remove golems that no longer exist
+    currentGolems.forEach((data, golemId) => {
+      if (!golems.find((g) => g.id === golemId)) {
+        scene.remove(data.instance.mesh);
+        data.instance.dispose();
+        currentGolems.delete(golemId);
+      }
+    });
+  }, [hasHydrated, golems]);
+
   // Handle conversation phase changes
   useEffect(() => {
     if (!cameraControllerRef.current) return;
@@ -2691,6 +2825,92 @@ export function SimpleScene({
   const handleLeaveConversation = useCallback(() => {
     exitConversation();
   }, [exitConversation]);
+
+  // Handle golem possession mode changes
+  useEffect(() => {
+    if (!rendererRef.current || !cameraControllerRef.current) return;
+
+    const renderer = rendererRef.current;
+    const perspCamera = cameraControllerRef.current.getPerspCamera();
+
+    if (possessedGolemId && !isGolemPossessedRef.current) {
+      // Enter golem possession mode
+      const golem = golemsDataRef.current.find((g) => g.id === possessedGolemId);
+      if (!golem) return;
+
+      // Create golem camera controller if needed
+      if (!golemCameraControllerRef.current) {
+        golemCameraControllerRef.current = new GolemCameraController();
+      }
+
+      // Create golem hands if needed
+      if (!golemHandsRef.current) {
+        const golemHands = new GolemFirstPersonHands();
+        golemHands.setVisible(false);
+        perspCamera.add(golemHands.getObject());
+        golemHandsRef.current = golemHands;
+      }
+
+      // Set up golem camera at golem position
+      const golemPos = new THREE.Vector3(golem.position.x, golem.position.y, golem.position.z);
+      golemCameraControllerRef.current.setPosition(golemPos);
+      golemCameraControllerRef.current.setCamera(perspCamera);
+
+      // Enter first person mode via camera controller
+      cameraControllerRef.current.enterFirstPerson(golemPos, 0);
+      isGolemPossessedRef.current = true;
+      isFirstPersonRef.current = true; // Reuse first person flag for input handling
+
+      // Hide wizard staff hands, show golem hands
+      if (firstPersonHandsRef.current) {
+        firstPersonHandsRef.current.setVisible(false);
+      }
+      if (golemHandsRef.current) {
+        golemHandsRef.current.setVisible(true);
+      }
+
+      // Hide golem mesh (we're inside it)
+      if (golemMeshRef.current) {
+        golemMeshRef.current.visible = false;
+      }
+
+      // Request pointer lock
+      renderer.domElement.requestPointerLock();
+
+    } else if (!possessedGolemId && isGolemPossessedRef.current) {
+      // Exit golem possession mode
+      if (document.pointerLockElement === renderer.domElement) {
+        document.exitPointerLock();
+      }
+
+      // Get final position from golem camera
+      if (golemCameraControllerRef.current) {
+        const finalPos = golemCameraControllerRef.current.getGroundPosition();
+        // Update golem position in store
+        const store = useGameStore.getState();
+        store.updateGolemPosition(possessedGolemId || '', {
+          x: finalPos.x,
+          y: finalPos.y,
+          z: finalPos.z,
+        });
+      }
+
+      // Hide golem hands, show wizard staff if in normal first person
+      if (golemHandsRef.current) {
+        golemHandsRef.current.setVisible(false);
+      }
+
+      // Show golem mesh again
+      if (golemMeshRef.current) {
+        golemMeshRef.current.visible = true;
+      }
+
+      // Exit first person camera mode
+      cameraControllerRef.current.exitFirstPerson();
+      isGolemPossessedRef.current = false;
+      isFirstPersonRef.current = false;
+    }
+  }, [possessedGolemId]);
 
   return <div ref={containerRef} style={{ width: '100%', height: '100%', cursor: 'pointer' }} />;
 }

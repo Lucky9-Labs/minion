@@ -13,7 +13,7 @@ import { FirstPersonHUD } from './ui/FirstPersonHUD';
 import { InteractionHUD } from './ui/InteractionHUD';
 import { useGameStore } from '@/store/gameStore';
 import { TOWER_FLOORS } from '@/types/game';
-import { useMinionMovement } from '@/lib/questSimulation';
+import { useMinionMovement, useGolemMovement } from '@/lib/questSimulation';
 import { WowIcon } from './ui/WowIcon';
 import { wowTheme } from '@/styles/theme';
 import { initSoundSettings, preloadSounds, playSound } from '@/lib/sounds';
@@ -31,6 +31,8 @@ export function GameLayout() {
   const conversation = useGameStore((state) => state.conversation);
   const exitConversation = useGameStore((state) => state.exitConversation);
   const cameraMode = useGameStore((state) => state.cameraMode);
+  const possessedGolemId = useGameStore((state) => state.possessedGolemId);
+  const possessGolem = useGameStore((state) => state.possessGolem);
 
   // Interaction state for first person mode and isometric mode
   const [interactionMode, setInteractionMode] = useState<InteractionMode>('idle');
@@ -57,6 +59,9 @@ export function GameLayout() {
   // Animate minion movement during quests
   useMinionMovement();
 
+  // Animate golem movement toward targets
+  useGolemMovement();
+
   // Poll for project/PR changes every 30 seconds
   useProjectPolling(30000);
 
@@ -78,12 +83,20 @@ export function GameLayout() {
     default: wowTheme.colors.scout,
   };
 
-  // Handle Escape key to exit conversation
+  // Handle Escape key to exit conversation or golem possession
   const handleKeyDown = useCallback((event: KeyboardEvent) => {
-    if (event.key === 'Escape' && conversation.active && conversation.phase === 'active') {
-      exitConversation();
+    if (event.key === 'Escape') {
+      // Exit golem possession first
+      if (possessedGolemId) {
+        possessGolem(null);
+        return;
+      }
+      // Then try to exit conversation
+      if (conversation.active && conversation.phase === 'active') {
+        exitConversation();
+      }
     }
-  }, [conversation.active, conversation.phase, exitConversation]);
+  }, [conversation.active, conversation.phase, exitConversation, possessedGolemId, possessGolem]);
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown);

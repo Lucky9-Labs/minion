@@ -3,6 +3,18 @@
 export type MinionRole = 'scout' | 'scribe' | 'artificer';
 export type MinionState = 'idle' | 'traveling' | 'working' | 'stuck' | 'returning' | 'conversing';
 
+// Golem types (independent of minion system)
+export type GolemState = 'idle' | 'traveling' | 'stomping';
+
+export interface Golem {
+  id: string;
+  name: string;
+  position: { x: number; y: number; z: number };
+  state: GolemState;
+  targetPosition?: { x: number; y: number; z: number };
+  createdAt: number;
+}
+
 // Minion personality types for conversation reactions
 export type MinionPersonality = 'friendly' | 'cautious' | 'grumpy';
 
@@ -114,6 +126,7 @@ export interface GameState {
   tower: Tower;
   wizard: Wizard;
   minions: Minion[];
+  golems: Golem[];
   quests: Quest[];
   artifacts: Artifact[];
   postcards: Postcard[];
