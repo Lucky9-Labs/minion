@@ -139,6 +139,8 @@ interface SimpleSceneProps {
   onTargetChange?: (target: import('@/types/interaction').Target | null) => void;
   onInteractionControllerReady?: (executeAction: (actionId: string) => void) => void;
   onMenuScreenPositionChange?: (position: { x: number; y: number } | null) => void;
+  // Spellbook selection callback
+  onSpellbookSelectionChange?: (selection: import('@/lib/FirstPersonSpellbook').SpellbookPage | null, pageIndex: number, pageCount: number) => void;
 }
 
 export function SimpleScene({
@@ -153,6 +155,7 @@ export function SimpleScene({
   onTargetChange,
   onInteractionControllerReady,
   onMenuScreenPositionChange,
+  onSpellbookSelectionChange,
 }: SimpleSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -541,12 +544,41 @@ export function SimpleScene({
 
     controlsRef.current = controls;
 
-    // Custom wheel handler for two-finger rotation
-    const handleWheel = (event: WheelEvent) => {
-      if (!controlsRef.current?.enabled) return;
+    // Spellbook page turn debounce
+    let lastPageTurnTime = 0;
+    const pageTurnCooldown = 300; // ms between page turns
 
+    // Custom wheel handler for two-finger rotation (isometric) and spellbook (first person)
+    const handleWheel = (event: WheelEvent) => {
       // Prevent default zoom behavior
       event.preventDefault();
+
+      // First person mode: handle spellbook page turning when in drawing mode
+      if (isFirstPersonRef.current && firstPersonHandsRef.current?.isSpellbookMode()) {
+        if (Math.abs(event.deltaY) > 10) {
+          const now = Date.now();
+          if (now - lastPageTurnTime > pageTurnCooldown) {
+            const direction = event.deltaY > 0 ? 1 : -1;
+            const turned = firstPersonHandsRef.current.turnSpellbookPage(direction as 1 | -1);
+            if (turned) {
+              lastPageTurnTime = now;
+              // Notify about selection change after page turn animation
+              setTimeout(() => {
+                if (firstPersonHandsRef.current) {
+                  const selection = firstPersonHandsRef.current.getSpellbookSelection();
+                  const pageIndex = firstPersonHandsRef.current.getSpellbookPageIndex();
+                  const pageCount = firstPersonHandsRef.current.getSpellbookPageCount();
+                  onSpellbookSelectionChange?.(selection, pageIndex, pageCount);
+                }
+              }, 250);
+            }
+          }
+        }
+        return;
+      }
+
+      // Isometric mode: handle camera rotation and zoom
+      if (!controlsRef.current?.enabled) return;
 
       // Use horizontal scroll (deltaX) for rotation, vertical (deltaY) for zoom
       const rotationSpeed = 0.003;
@@ -981,6 +1013,21 @@ export function SimpleScene({
         } else {
           onMenuOptionsChange?.(null);
           onMenuScreenPositionChange?.(null);
+        }
+
+        // Toggle spellbook in first person when entering/exiting drawing mode
+        if (isFirstPersonRef.current && firstPersonHandsRef.current) {
+          if (mode === 'drawing') {
+            firstPersonHandsRef.current.setSpellbookMode(true);
+            // Notify about spellbook selection
+            const selection = firstPersonHandsRef.current.getSpellbookSelection();
+            const pageIndex = firstPersonHandsRef.current.getSpellbookPageIndex();
+            const pageCount = firstPersonHandsRef.current.getSpellbookPageCount();
+            onSpellbookSelectionChange?.(selection, pageIndex, pageCount);
+          } else if (mode === 'idle') {
+            firstPersonHandsRef.current.setSpellbookMode(false);
+            onSpellbookSelectionChange?.(null, 0, 0);
+          }
         }
       },
       onStaffStateChange: (state) => {

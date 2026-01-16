@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { StaffState } from '@/types/interaction';
+import { FirstPersonSpellbook, SPELLBOOK_PAGES, type SpellbookPage } from './FirstPersonSpellbook';
+import { createPreviewMesh, type PreviewType } from './SpellbookPreviews';
 
 export interface FirstPersonHandsConfig {
   // Position offset from camera
@@ -30,6 +32,12 @@ export class FirstPersonHands {
   private orbLight!: THREE.PointLight;
   private floatingGem!: THREE.Mesh;
   private gemGlow!: THREE.Mesh;
+
+  // Spellbook for entity selection
+  private spellbook: FirstPersonSpellbook;
+  private spellbookMode: boolean = false;
+  private previewMeshes: Map<PreviewType, THREE.Group> = new Map();
+  private currentPreviewType: PreviewType | null = null;
 
   // Animation state
   private targetSwayX: number = 0;
@@ -65,6 +73,28 @@ export class FirstPersonHands {
     // Apply base position and rotation
     this.group.position.copy(this.config.positionOffset);
     this.staff.rotation.copy(this.config.baseRotation);
+
+    // Initialize spellbook
+    this.spellbook = new FirstPersonSpellbook();
+    this.group.add(this.spellbook.getObject());
+
+    // Pre-create all preview meshes for smooth transitions
+    this.initializePreviewMeshes();
+  }
+
+  /**
+   * Pre-create all preview meshes to avoid lag during page turns
+   */
+  private initializePreviewMeshes(): void {
+    const previewTypes: PreviewType[] = [
+      'goblin', 'penguin', 'mushroom',
+      'cottage', 'workshop', 'laboratory', 'market', 'manor'
+    ];
+
+    for (const type of previewTypes) {
+      const mesh = createPreviewMesh(type);
+      this.previewMeshes.set(type, mesh);
+    }
   }
 
   private createStaff(): THREE.Group {
@@ -229,6 +259,95 @@ export class FirstPersonHands {
     }
   }
 
+  // ============================================
+  // SPELLBOOK CONTROLS
+  // ============================================
+
+  /**
+   * Enter or exit spellbook mode (for entity selection)
+   */
+  setSpellbookMode(active: boolean): void {
+    if (this.spellbookMode === active) return;
+
+    this.spellbookMode = active;
+
+    if (active) {
+      // Show spellbook and open it
+      this.spellbook.setVisible(true);
+      this.spellbook.setOpen(true);
+      // Set initial preview based on current page
+      this.updatePreviewForCurrentPage();
+    } else {
+      // Close and hide spellbook
+      this.spellbook.setOpen(false);
+      // Spellbook will be hidden after close animation completes
+    }
+  }
+
+  /**
+   * Check if spellbook mode is active
+   */
+  isSpellbookMode(): boolean {
+    return this.spellbookMode;
+  }
+
+  /**
+   * Turn spellbook page (returns true if page was turned)
+   */
+  turnSpellbookPage(direction: 1 | -1): boolean {
+    if (!this.spellbookMode) return false;
+
+    const turned = this.spellbook.turnPage(direction);
+    if (turned) {
+      // Update preview after a short delay to match animation
+      setTimeout(() => {
+        this.updatePreviewForCurrentPage();
+      }, 250); // Match page turn animation timing
+    }
+    return turned;
+  }
+
+  /**
+   * Get the currently selected spellbook page
+   */
+  getSpellbookSelection(): SpellbookPage | null {
+    if (!this.spellbookMode) return null;
+    return this.spellbook.getCurrentPage();
+  }
+
+  /**
+   * Get current spellbook page index
+   */
+  getSpellbookPageIndex(): number {
+    return this.spellbook.getCurrentPageIndex();
+  }
+
+  /**
+   * Get total spellbook page count
+   */
+  getSpellbookPageCount(): number {
+    return this.spellbook.getPageCount();
+  }
+
+  /**
+   * Update the preview mesh to match current page
+   */
+  private updatePreviewForCurrentPage(): void {
+    const page = this.spellbook.getCurrentPage();
+    const previewType = page.id as PreviewType;
+
+    if (this.currentPreviewType === previewType) return;
+
+    // Get pre-created mesh
+    const mesh = this.previewMeshes.get(previewType);
+    if (mesh) {
+      // Clone the mesh so we can manipulate it independently
+      const clone = mesh.clone();
+      this.spellbook.setPreviewMesh(clone);
+      this.currentPreviewType = previewType;
+    }
+  }
+
   /**
    * Get the world position of the staff gem tip
    */
@@ -353,6 +472,15 @@ export class FirstPersonHands {
     } else {
       this.orbLight.color.lerp(new THREE.Color(0x9966ff), deltaTime * 3);
     }
+
+    // Update spellbook
+    this.spellbook.update(deltaTime, elapsedTime);
+
+    // Hide spellbook after close animation completes
+    if (!this.spellbookMode && !this.spellbook.getIsOpen() && !this.spellbook.isAnimating()) {
+      this.spellbook.setVisible(false);
+      this.currentPreviewType = null;
+    }
   }
 
   /**
@@ -374,5 +502,21 @@ export class FirstPersonHands {
         }
       }
     });
+
+    // Dispose spellbook
+    this.spellbook.dispose();
+
+    // Dispose pre-created preview meshes
+    for (const mesh of this.previewMeshes.values()) {
+      mesh.traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          object.geometry.dispose();
+          if (object.material instanceof THREE.Material) {
+            object.material.dispose();
+          }
+        }
+      });
+    }
+    this.previewMeshes.clear();
   }
 }
