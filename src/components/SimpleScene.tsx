@@ -14,7 +14,7 @@ import { createVillagePaths } from '@/lib/terrain/VillagePaths';
 import type { InteriorLight } from '@/lib/building/RoomMeshBuilder';
 import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
 import { CameraController } from '@/lib/camera';
-import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall, OutlineEffect, FlightEffect } from '@/lib/effects';
+import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall, CloudSource, OutlineEffect, FlightEffect } from '@/lib/effects';
 import type { ReactionType } from '@/lib/effects';
 import { IslandEdgeBuilder, PortalGateway } from '@/lib/terrain';
 import { WizardBehavior } from '@/lib/wizard';
@@ -191,6 +191,8 @@ export function SimpleScene({
   const skyEnvironmentRef = useRef<SkyEnvironment | null>(null);
   const islandEdgeRef = useRef<THREE.Group | null>(null);
   const waterfallRef = useRef<Waterfall | null>(null);
+  const northWaterfallRef = useRef<Waterfall | null>(null);
+  const northCloudSourceRef = useRef<CloudSource | null>(null);
   const portalGatewayRef = useRef<PortalGateway | null>(null);
   const interactionControllerRef = useRef<StaffInteractionController | null>(null);
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
@@ -647,12 +649,13 @@ export function SimpleScene({
       waterfallWidth: 0.5,
       portalAngle: Math.PI / 2, // True south
       portalWidth: 0.35, // Larger zone to clear area behind portal
+      // No exclusion for north waterfall - water flows OVER the rocks, not through a gap
     });
     const islandEdge = islandEdgeBuilder.build((x, z) => terrainBuilder.getHeightAt(x, z));
     scene.add(islandEdge);
     islandEdgeRef.current = islandEdge;
 
-    // === WATERFALL (flowing off the island edge) ===
+    // === SOUTHERN WATERFALL (flowing off the island edge) ===
     const waterfallPos = islandEdgeBuilder.getWaterfallPosition();
     const waterfallOrigin = new THREE.Vector3(
       waterfallPos.x,
@@ -676,6 +679,40 @@ export function SimpleScene({
     });
     scene.add(waterfall.getGroup());
     waterfallRef.current = waterfall;
+
+    // === NORTHERN WATERFALL (water source from clouds above mountains) ===
+    const northWaterfallConfig = terrainBuilder.getNorthernWaterfallConfig();
+
+    // Use cloudOrigin as the waterfall start point, with large fallDistance to spread mist
+    // Same approach as south waterfall - origin high, large fall distance for dramatic effect
+    const northWaterfall = new Waterfall(
+      northWaterfallConfig.cloudOrigin,
+      northWaterfallConfig.flowDirection,
+      {
+        particleCount: 250,
+        width: 8,
+        fallDistance: 45, // Match south waterfall for consistent mist spread
+        fallSpeed: 10,
+        spreadFactor: 0.4,
+        mistParticleCount: 80, // Large falling orbs
+        waterColor: 0x4a9ed9,
+        mistColor: 0xccddee,
+      }
+    );
+    scene.add(northWaterfall.getGroup());
+    northWaterfallRef.current = northWaterfall;
+
+    // Create cloud source above the north waterfall (at the original high position)
+    const northCloudSource = new CloudSource(
+      northWaterfallConfig.cloudOrigin,
+      {
+        particleCount: 25,
+        radius: 5,
+        color: 0xeef4ff,
+      }
+    );
+    scene.add(northCloudSource.getGroup());
+    northCloudSourceRef.current = northCloudSource;
 
     // === PORTAL GATEWAY (at true south) ===
     const portalZ = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2 * 0.85; // At map edge
@@ -1468,6 +1505,18 @@ export function SimpleScene({
       if (waterfallRef.current) {
         waterfallRef.current.update(deltaTime);
         waterfallRef.current.setTimeOfDay(timeOfDay);
+      }
+
+      // Update northern waterfall animation and colors
+      if (northWaterfallRef.current) {
+        northWaterfallRef.current.update(deltaTime);
+        northWaterfallRef.current.setTimeOfDay(timeOfDay);
+      }
+
+      // Update north cloud source animation and colors
+      if (northCloudSourceRef.current) {
+        northCloudSourceRef.current.update(deltaTime);
+        northCloudSourceRef.current.setTimeOfDay(timeOfDay);
       }
 
       // Update portal gateway animation
@@ -2267,6 +2316,8 @@ export function SimpleScene({
       torchManagerRef.current?.dispose();
       skyEnvironmentRef.current?.dispose();
       waterfallRef.current?.dispose();
+      northWaterfallRef.current?.dispose();
+      northCloudSourceRef.current?.dispose();
       portalGatewayRef.current?.dispose();
       interactionControllerRef.current?.dispose();
       if (islandEdgeRef.current) {

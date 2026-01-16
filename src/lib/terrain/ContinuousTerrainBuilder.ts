@@ -80,6 +80,29 @@ function fbmNoise(x: number, z: number, seed: number, octaves: number = 4): numb
 }
 
 /**
+ * Northern Waterfall configuration - where water enters the map from clouds
+ * Position is NWW (North-West-West) - on the north mountains
+ */
+export const NORTH_WATERFALL_CONFIG = {
+  // Waterfall ridge location (where water flows over the mountains)
+  gapCenterX: -25,
+  gapCenterZ: -48,
+  gapWidth: 5, // Radius of height-capped area
+  maxMountainHeight: 10, // Cap mountain height here so water flows over
+
+  // Catch pool at base of waterfall (where water collects before river)
+  poolCenterX: -22,
+  poolCenterZ: -38,
+  poolRadius: 4, // Area of pool
+
+  // Cloud source position (elevated above the capped ridge)
+  cloudHeight: 20, // Higher to be visible above mountain rocks
+
+  // Flow direction (toward SE to connect to river)
+  flowAngle: Math.PI * 0.35, // ~63 degrees toward SE
+};
+
+/**
  * Builds continuous terrain with height variation, rivers, paths, and vegetation
  */
 export class ContinuousTerrainBuilder {
@@ -90,6 +113,7 @@ export class ContinuousTerrainBuilder {
   private mainPaths: PathNode[][] = [];
   private bridgeCrossings: BridgeCrossing[] = [];
   private waterMaterial: THREE.ShaderMaterial | null = null;
+  private poolWaterMaterial: THREE.ShaderMaterial | null = null;
 
   constructor(config: ContinuousTerrainConfig = DEFAULT_CONTINUOUS_CONFIG) {
     this.config = config;
@@ -98,6 +122,7 @@ export class ContinuousTerrainBuilder {
 
     // Generate terrain data
     this.generateHeightMap();
+    this.capWaterfallMountainHeight(); // Cap mountain height where waterfall flows over
     this.generateRiver();
     this.generatePaths();
     this.findBridgeCrossings(); // Find where paths cross water
@@ -117,6 +142,10 @@ export class ContinuousTerrainBuilder {
     // Transparent water blocks over river valleys
     const water = this.buildWaterMesh();
     group.add(water);
+
+    // Pool water mesh for the northern waterfall catch basin
+    const poolWater = this.buildPoolWaterMesh();
+    group.add(poolWater);
 
     // Cobblestone paths (3D modeled stones)
     const cobblestones = this.buildCobblestonePaths();
@@ -302,6 +331,42 @@ export class ContinuousTerrainBuilder {
     const waterMesh = new THREE.Mesh(geometry, this.waterMaterial);
     waterMesh.renderOrder = 1; // Render after ground mesh to avoid Z-fighting
     group.add(waterMesh);
+
+    return group;
+  }
+
+  /**
+   * Build the catch pool water mesh for the northern waterfall
+   * Creates a circular water surface at the pool location
+   */
+  private buildPoolWaterMesh(): THREE.Group {
+    const group = new THREE.Group();
+
+    const { poolCenterX, poolCenterZ, poolRadius } = NORTH_WATERFALL_CONFIG;
+
+    // Create circular pool geometry
+    const segments = 16;
+    const geometry = new THREE.CircleGeometry(poolRadius * 0.85, segments);
+    geometry.rotateX(-Math.PI / 2);
+
+    // Get pool height from terrain
+    const poolY = this.getHeightAt(poolCenterX, poolCenterZ) + 0.15;
+
+    // Animated water shader material (slightly different from river - more turbulent)
+    this.poolWaterMaterial = createRiverMaterial({
+      shallowColor: new THREE.Color(0x5da4d4),
+      deepColor: new THREE.Color(0x1a5a8a),
+      flowSpeed: 0.08, // Slower, more gentle
+      flowDirection: new THREE.Vector2(0.5, 0.5), // Circular/outward flow
+      rippleScale: 8.0, // Larger ripples
+      rippleStrength: 0.5,
+      opacity: 0.9,
+    });
+
+    const poolMesh = new THREE.Mesh(geometry, this.poolWaterMaterial);
+    poolMesh.position.set(poolCenterX, poolY, poolCenterZ);
+    poolMesh.renderOrder = 1;
+    group.add(poolMesh);
 
     return group;
   }
@@ -504,17 +569,79 @@ export class ContinuousTerrainBuilder {
   }
 
   /**
-   * Generate river path flowing from NNW (mountains) to SEE (lowlands)
-   * River starts at the northern mountains and descends to the southeast
+   * Cap the mountain height at the waterfall location
+   * Instead of carving, we limit the max height so water can flow over the ridge
+   */
+  private capWaterfallMountainHeight(): void {
+    const { resolution, worldSize } = this.config;
+    const halfSize = worldSize / 2;
+
+    const {
+      gapCenterX,
+      gapCenterZ,
+      gapWidth,
+      maxMountainHeight,
+      poolCenterX,
+      poolCenterZ,
+      poolRadius,
+    } = NORTH_WATERFALL_CONFIG;
+
+    // Cap height in the waterfall flow area (ridge where water flows over)
+    for (let z = 0; z < resolution; z++) {
+      for (let x = 0; x < resolution; x++) {
+        const index = z * resolution + x;
+
+        // World position
+        const wx = (x / (resolution - 1)) * worldSize - halfSize;
+        const wz = (z / (resolution - 1)) * worldSize - halfSize;
+
+        // Distance from waterfall ridge center
+        const distFromRidge = Math.sqrt(
+          (wx - gapCenterX) ** 2 + (wz - gapCenterZ) ** 2
+        );
+
+        // Cap the height at the ridge with smooth transition
+        if (distFromRidge < gapWidth) {
+          const t = distFromRidge / gapWidth; // 0 at center, 1 at edge
+          // Smooth blend from capped height to full height
+          const capHeight = maxMountainHeight;
+          const currentHeight = this.heightMap[index];
+          if (currentHeight > capHeight) {
+            // Smoothly blend: full cap at center, no cap at edge
+            const blendFactor = t * t; // Quadratic falloff
+            this.heightMap[index] = capHeight + (currentHeight - capHeight) * blendFactor;
+          }
+        }
+
+        // Also cap pool area slightly lower for water collection
+        const distFromPool = Math.sqrt(
+          (wx - poolCenterX) ** 2 + (wz - poolCenterZ) ** 2
+        );
+
+        if (distFromPool < poolRadius) {
+          const t = distFromPool / poolRadius;
+          const poolCapHeight = maxMountainHeight * 0.8; // Slightly lower for pool
+          const currentHeight = this.heightMap[index];
+          if (currentHeight > poolCapHeight) {
+            const blendFactor = t * t;
+            this.heightMap[index] = poolCapHeight + (currentHeight - poolCapHeight) * blendFactor;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Generate river path flowing from catch pool (NWW) to SEE (lowlands)
+   * River starts at the northern waterfall catch pool and descends to the southeast
    */
   private generateRiver(): void {
     const { worldSize, clearingRadius } = this.config;
     const halfSize = worldSize / 2;
 
-    // River starts from NNW (north-northwest) - on the mountains
-    // NNW is approximately -X, -Z direction
-    const startX = -halfSize * 0.4 + this.rng.range(-5, 5); // Slightly west of center
-    const startZ = -halfSize * 0.9 + this.rng.range(-3, 3); // Near north edge
+    // River starts from the catch pool (northern waterfall)
+    const startX = NORTH_WATERFALL_CONFIG.poolCenterX;
+    const startZ = NORTH_WATERFALL_CONFIG.poolCenterZ + NORTH_WATERFALL_CONFIG.poolRadius * 0.8;
 
     let currentX = startX;
     let currentZ = startZ;
@@ -1107,6 +1234,18 @@ export class ContinuousTerrainBuilder {
       const dist = Math.sqrt((x - zone.x) ** 2 + (z - zone.z) ** 2);
       if (dist < zone.radius) return true;
     }
+
+    // Also exclude northern waterfall area (gap, channel, and pool)
+    const { gapCenterX, gapCenterZ, gapWidth, poolCenterX, poolCenterZ, poolRadius } = NORTH_WATERFALL_CONFIG;
+
+    // Check gap area
+    const distFromGap = Math.sqrt((x - gapCenterX) ** 2 + (z - gapCenterZ) ** 2);
+    if (distFromGap < gapWidth * 1.2) return true;
+
+    // Check pool area
+    const distFromPool = Math.sqrt((x - poolCenterX) ** 2 + (z - poolCenterZ) ** 2);
+    if (distFromPool < poolRadius * 1.3) return true;
+
     return false;
   }
 
@@ -1790,6 +1929,47 @@ export class ContinuousTerrainBuilder {
     if (this.waterMaterial) {
       updateRiverMaterial(this.waterMaterial, deltaTime);
     }
+    if (this.poolWaterMaterial) {
+      updateRiverMaterial(this.poolWaterMaterial, deltaTime);
+    }
+  }
+
+  /**
+   * Get the northern waterfall configuration for scene integration
+   */
+  getNorthernWaterfallConfig(): {
+    cloudOrigin: THREE.Vector3;
+    poolPosition: THREE.Vector3;
+    flowDirection: THREE.Vector3;
+  } {
+    const poolY = this.getHeightAt(
+      NORTH_WATERFALL_CONFIG.poolCenterX,
+      NORTH_WATERFALL_CONFIG.poolCenterZ
+    );
+
+    // Cloud origin is above the gap
+    const gapY = this.getHeightAt(
+      NORTH_WATERFALL_CONFIG.gapCenterX,
+      NORTH_WATERFALL_CONFIG.gapCenterZ
+    );
+
+    return {
+      cloudOrigin: new THREE.Vector3(
+        NORTH_WATERFALL_CONFIG.gapCenterX,
+        gapY + NORTH_WATERFALL_CONFIG.cloudHeight,
+        NORTH_WATERFALL_CONFIG.gapCenterZ
+      ),
+      poolPosition: new THREE.Vector3(
+        NORTH_WATERFALL_CONFIG.poolCenterX,
+        poolY,
+        NORTH_WATERFALL_CONFIG.poolCenterZ
+      ),
+      flowDirection: new THREE.Vector3(
+        Math.cos(NORTH_WATERFALL_CONFIG.flowAngle),
+        0,
+        Math.sin(NORTH_WATERFALL_CONFIG.flowAngle)
+      ),
+    };
   }
 
   /**
@@ -1803,6 +1983,10 @@ export class ContinuousTerrainBuilder {
     if (this.waterMaterial) {
       this.waterMaterial.dispose();
       this.waterMaterial = null;
+    }
+    if (this.poolWaterMaterial) {
+      this.poolWaterMaterial.dispose();
+      this.poolWaterMaterial = null;
     }
   }
 }

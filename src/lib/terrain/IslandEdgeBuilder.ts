@@ -12,14 +12,18 @@ export interface IslandEdgeConfig {
   rimHeight: number;
   /** Number of segments for the bowl geometry */
   bowlSegments: number;
-  /** Position of waterfall gap (angle in radians) */
+  /** Position of southern waterfall gap (angle in radians) */
   waterfallAngle: number;
-  /** Width of waterfall gap (in radians) */
+  /** Width of southern waterfall gap (in radians) */
   waterfallWidth: number;
   /** Angle of portal gateway (radians, default: π/2 = true south) */
   portalAngle?: number;
   /** Angular width of portal opening (in radians) */
   portalWidth?: number;
+  /** Position of northern waterfall gap (angle in radians) - water source */
+  northWaterfallAngle?: number;
+  /** Width of northern waterfall gap (in radians) */
+  northWaterfallWidth?: number;
 }
 
 export const DEFAULT_ISLAND_EDGE_CONFIG: IslandEdgeConfig = {
@@ -401,15 +405,17 @@ export class IslandEdgeBuilder {
   }
 
   /**
-   * Check if an angle falls within an exclusion zone (portal or waterfall)
+   * Check if an angle falls within an exclusion zone (portal, southern waterfall, or northern waterfall)
    * Returns true if rocks should NOT render at this angle
    */
   private isInExclusionZone(angle: number): boolean {
     const { waterfallAngle, waterfallWidth } = this.config;
     const portalAngle = this.config.portalAngle ?? (Math.PI / 2);
     const portalWidth = this.config.portalWidth ?? 0.18;
+    const northWaterfallAngle = this.config.northWaterfallAngle;
+    const northWaterfallWidth = this.config.northWaterfallWidth ?? 0.4;
 
-    // Check waterfall exclusion zone
+    // Check southern waterfall exclusion zone
     let waterfallDiff = Math.abs(angle - waterfallAngle);
     waterfallDiff = Math.min(waterfallDiff, Math.PI * 2 - waterfallDiff);
     if (waterfallDiff < waterfallWidth / 2) {
@@ -421,6 +427,15 @@ export class IslandEdgeBuilder {
     portalDiff = Math.min(portalDiff, Math.PI * 2 - portalDiff);
     if (portalDiff < portalWidth / 2) {
       return true;
+    }
+
+    // Check northern waterfall exclusion zone (if defined)
+    if (northWaterfallAngle !== undefined) {
+      let northDiff = Math.abs(angle - northWaterfallAngle);
+      northDiff = Math.min(northDiff, Math.PI * 2 - northDiff);
+      if (northDiff < northWaterfallWidth / 2) {
+        return true;
+      }
     }
 
     return false;
