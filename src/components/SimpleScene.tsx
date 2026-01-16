@@ -16,7 +16,7 @@ import { DayNightCycle, TorchManager, SkyEnvironment } from '@/lib/lighting';
 import { CameraController } from '@/lib/camera';
 import { TeleportEffect, MagicCircle, ReactionIndicator, Waterfall, OutlineEffect, FlightEffect } from '@/lib/effects';
 import type { ReactionType } from '@/lib/effects';
-import { IslandEdgeBuilder } from '@/lib/terrain';
+import { IslandEdgeBuilder, PortalGateway } from '@/lib/terrain';
 import { WizardBehavior } from '@/lib/wizard';
 import { useProjectStore } from '@/store/projectStore';
 import {
@@ -191,6 +191,7 @@ export function SimpleScene({
   const skyEnvironmentRef = useRef<SkyEnvironment | null>(null);
   const islandEdgeRef = useRef<THREE.Group | null>(null);
   const waterfallRef = useRef<Waterfall | null>(null);
+  const portalGatewayRef = useRef<PortalGateway | null>(null);
   const interactionControllerRef = useRef<StaffInteractionController | null>(null);
   const firstPersonHandsRef = useRef<FirstPersonHands | null>(null);
   const isFirstPersonRef = useRef<boolean>(false);
@@ -644,6 +645,8 @@ export function SimpleScene({
       bowlSegments: 20,
       waterfallAngle,
       waterfallWidth: 0.5,
+      portalAngle: Math.PI / 2, // True south
+      portalWidth: 0.35, // Larger zone to clear area behind portal
     });
     const islandEdge = islandEdgeBuilder.build((x, z) => terrainBuilder.getHeightAt(x, z));
     scene.add(islandEdge);
@@ -673,6 +676,16 @@ export function SimpleScene({
     });
     scene.add(waterfall.getGroup());
     waterfallRef.current = waterfall;
+
+    // === PORTAL GATEWAY (at true south) ===
+    const portalZ = DEFAULT_CONTINUOUS_CONFIG.worldSize / 2 * 0.85; // At map edge
+    const portalY = terrainBuilder.getHeightAt(0, portalZ);
+    const portalGateway = new PortalGateway();
+    const portalMesh = portalGateway.getMesh();
+    portalMesh.position.set(0, portalY, portalZ);
+    portalMesh.rotation.y = Math.PI; // Face north toward cottage
+    scene.add(portalMesh);
+    portalGatewayRef.current = portalGateway;
 
     // Camera-relative wall culler - DISABLED for now (confusing behavior)
     // const wallCuller = new CameraRelativeWallCuller(camera);
@@ -1455,6 +1468,11 @@ export function SimpleScene({
       if (waterfallRef.current) {
         waterfallRef.current.update(deltaTime);
         waterfallRef.current.setTimeOfDay(timeOfDay);
+      }
+
+      // Update portal gateway animation
+      if (portalGatewayRef.current) {
+        portalGatewayRef.current.update(deltaTime);
       }
 
       // Update terrain animations (river water shader)
@@ -2249,9 +2267,13 @@ export function SimpleScene({
       torchManagerRef.current?.dispose();
       skyEnvironmentRef.current?.dispose();
       waterfallRef.current?.dispose();
+      portalGatewayRef.current?.dispose();
       interactionControllerRef.current?.dispose();
       if (islandEdgeRef.current) {
         scene.remove(islandEdgeRef.current);
+      }
+      if (portalGatewayRef.current) {
+        scene.remove(portalGatewayRef.current.getMesh());
       }
       cameraControllerRef.current?.dispose();
       teleportEffectRef.current?.dispose();

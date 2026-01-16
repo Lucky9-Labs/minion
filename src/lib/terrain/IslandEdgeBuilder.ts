@@ -16,6 +16,10 @@ export interface IslandEdgeConfig {
   waterfallAngle: number;
   /** Width of waterfall gap (in radians) */
   waterfallWidth: number;
+  /** Angle of portal gateway (radians, default: π/2 = true south) */
+  portalAngle?: number;
+  /** Angular width of portal opening (in radians) */
+  portalWidth?: number;
 }
 
 export const DEFAULT_ISLAND_EDGE_CONFIG: IslandEdgeConfig = {
@@ -25,6 +29,8 @@ export const DEFAULT_ISLAND_EDGE_CONFIG: IslandEdgeConfig = {
   bowlSegments: 12,
   waterfallAngle: Math.PI * 0.75,
   waterfallWidth: 0.4,
+  portalAngle: Math.PI / 2, // True south
+  portalWidth: 0.35, // Larger zone to keep area behind portal clear
 };
 
 /**
@@ -51,6 +57,14 @@ export class IslandEdgeBuilder {
     // Build rim rocks that push up around the edge
     const rim = this.buildRimRocks(getHeightAt);
     group.add(rim);
+
+    // Build small decorative rocks at waterfall area (ground level)
+    const waterfallRocks = this.buildWaterfallFloorRocks(getHeightAt);
+    group.add(waterfallRocks);
+
+    // Build small pebble-like rocks in portal exclusion zone
+    const portalPebbles = this.buildPortalPebbleRocks(getHeightAt);
+    group.add(portalPebbles);
 
     // Build floating crystal at bottom
     const crystal = this.buildFloatingCrystal();
@@ -142,16 +156,8 @@ export class IslandEdgeBuilder {
     for (let i = 0; i < totalRockPoints; i++) {
       const angle = (i / totalRockPoints) * Math.PI * 2;
 
-      // Check if this is near waterfall - add framing rocks instead of skipping
-      const angleDiff = Math.abs(angle - waterfallAngle);
-      const normalizedDiff = Math.min(angleDiff, Math.PI * 2 - angleDiff);
-      const isWaterfallArea = normalizedDiff < waterfallWidth * 0.8;
-
-      if (isWaterfallArea) {
-        // Add framing rocks on the sides of the waterfall
-        if (normalizedDiff > waterfallWidth * 0.4 && normalizedDiff < waterfallWidth * 0.9) {
-          this.addWaterfallFrameRocks(group, angle, islandRadius, rimHeight, getHeightAt);
-        }
+      // Skip rendering rocks in exclusion zones (portal and waterfall)
+      if (this.isInExclusionZone(angle)) {
         continue;
       }
 
@@ -160,7 +166,7 @@ export class IslandEdgeBuilder {
       const sampleZ = Math.sin(angle) * islandRadius * 0.8;
       const baseY = getHeightAt(sampleX, sampleZ);
 
-      // Create 2-4 rocks per point at varying radii for dense coverage
+      // Create 2-4 rocks per point at varying radii for dense coverage (full height)
       const rockLayers = 2 + Math.floor(Math.random() * 2);
 
       for (let layer = 0; layer < rockLayers; layer++) {
@@ -170,7 +176,7 @@ export class IslandEdgeBuilder {
         const x = Math.cos(angle) * edgeRadius;
         const z = Math.sin(angle) * edgeRadius;
 
-        // Scale based on layer - outer rocks taller
+        // Scale based on layer - outer rocks taller (no height reduction)
         const rockScale = 0.8 + layer * 0.3 + Math.random() * 0.4;
         const rock = this.buildSimpleRock(rimHeight * rockScale);
 
@@ -205,22 +211,20 @@ export class IslandEdgeBuilder {
 
     // Create a ring of connected wall segments - taller and thicker
     const segments = 32;
-    const wallHeight = rimHeight * 1.2; // Taller wall
+    const baseWallHeight = rimHeight * 1.2; // Taller wall
     const wallThickness = 8; // Thicker wall
 
     for (let i = 0; i < segments; i++) {
       const angle = (i / segments) * Math.PI * 2;
       const nextAngle = ((i + 1) / segments) * Math.PI * 2;
+      const midAngle = (angle + nextAngle) / 2;
 
-      // Skip waterfall area
-      const { waterfallAngle, waterfallWidth } = this.config;
-      const angleDiff = Math.abs(angle - waterfallAngle);
-      const normalizedDiff = Math.min(angleDiff, Math.PI * 2 - angleDiff);
-      if (normalizedDiff < waterfallWidth * 0.5) continue;
+      // Skip exclusion zones (portal and waterfall)
+      if (this.isInExclusionZone(midAngle)) continue;
 
-      // Create wall segment as a box
+      // Create wall segment as a box (full height, no reduction)
       const segmentLength = (2 * Math.PI * islandRadius) / segments + 4;
-      const geometry = new THREE.BoxGeometry(segmentLength, wallHeight, wallThickness);
+      const geometry = new THREE.BoxGeometry(segmentLength, baseWallHeight, wallThickness);
 
       // Color - darker rocky tone
       const color = new THREE.Color().setHSL(0.08, 0.3, 0.22 + Math.random() * 0.08);
@@ -233,12 +237,11 @@ export class IslandEdgeBuilder {
       const segment = new THREE.Mesh(geometry, material);
 
       // Position at edge - slightly outside terrain
-      const midAngle = (angle + nextAngle) / 2;
       const x = Math.cos(midAngle) * islandRadius * 1.02;
       const z = Math.sin(midAngle) * islandRadius * 1.02;
 
       // Position wall so it extends both above and below terrain level
-      segment.position.set(x, wallHeight * 0.2, z);
+      segment.position.set(x, baseWallHeight * 0.2, z);
       segment.rotation.y = -midAngle + Math.PI / 2;
 
       segment.castShadow = true;
@@ -250,16 +253,14 @@ export class IslandEdgeBuilder {
     for (let i = 0; i < segments; i++) {
       const angle = (i / segments) * Math.PI * 2;
       const nextAngle = ((i + 1) / segments) * Math.PI * 2;
+      const midAngle = (angle + nextAngle) / 2;
 
-      // Skip waterfall area
-      const { waterfallAngle, waterfallWidth } = this.config;
-      const angleDiff = Math.abs(angle - waterfallAngle);
-      const normalizedDiff = Math.min(angleDiff, Math.PI * 2 - angleDiff);
-      if (normalizedDiff < waterfallWidth * 0.5) continue;
+      // Skip exclusion zones (portal and waterfall)
+      if (this.isInExclusionZone(midAngle)) continue;
 
       const segmentLength = (2 * Math.PI * islandRadius) / segments + 4;
-      const skirtHeight = cliffDepth * 0.3;
-      const geometry = new THREE.BoxGeometry(segmentLength, skirtHeight, wallThickness * 1.5);
+      const baseSkirtHeight = cliffDepth * 0.3;
+      const geometry = new THREE.BoxGeometry(segmentLength, baseSkirtHeight, wallThickness * 1.5);
 
       const color = new THREE.Color().setHSL(0.07, 0.25, 0.18 + Math.random() * 0.05);
       const material = new THREE.MeshStandardMaterial({
@@ -269,11 +270,10 @@ export class IslandEdgeBuilder {
       });
 
       const skirt = new THREE.Mesh(geometry, material);
-      const midAngle = (angle + nextAngle) / 2;
       const x = Math.cos(midAngle) * islandRadius * 1.03;
       const z = Math.sin(midAngle) * islandRadius * 1.03;
 
-      skirt.position.set(x, -skirtHeight * 0.4, z);
+      skirt.position.set(x, -baseSkirtHeight * 0.4, z);
       skirt.rotation.y = -midAngle + Math.PI / 2;
 
       skirt.castShadow = true;
@@ -291,28 +291,139 @@ export class IslandEdgeBuilder {
     angle: number,
     islandRadius: number,
     rimHeight: number,
-    getHeightAt: (x: number, z: number) => number
+    getHeightAt: (x: number, z: number) => number,
+    heightMult: number = 1.0
   ): void {
     const sampleX = Math.cos(angle) * islandRadius * 0.85;
     const sampleZ = Math.sin(angle) * islandRadius * 0.85;
     const baseY = getHeightAt(sampleX, sampleZ);
 
-    // Create taller framing rocks
+    // Create taller framing rocks, reduced by height multiplier
     for (let i = 0; i < 3; i++) {
       const radiusOffset = 0.9 + i * 0.05;
       const x = Math.cos(angle) * islandRadius * radiusOffset;
       const z = Math.sin(angle) * islandRadius * radiusOffset;
 
-      const rock = this.buildSimpleRock(rimHeight * (1.2 + i * 0.3));
+      const rock = this.buildSimpleRock(rimHeight * (1.2 + i * 0.3) * heightMult);
       rock.position.set(
         x + (Math.random() - 0.5) * 2,
-        baseY + i * rimHeight * 0.15,
+        baseY + i * rimHeight * 0.15 * heightMult,
         z + (Math.random() - 0.5) * 2
       );
       rock.rotation.y = angle + Math.PI;
 
       group.add(rock);
     }
+  }
+
+  /**
+   * Build small decorative rocks at ground level around the waterfall area
+   */
+  private buildWaterfallFloorRocks(getHeightAt: (x: number, z: number) => number): THREE.Group {
+    const group = new THREE.Group();
+    const { islandRadius, waterfallAngle, waterfallWidth } = this.config;
+
+    // Scatter small rocks around the waterfall opening at edge radius
+    const rockCount = 8;
+    for (let i = 0; i < rockCount; i++) {
+      // Angle around the waterfall area
+      const angleOffset = (i / rockCount) * waterfallWidth * 1.5 - (waterfallWidth * 0.75);
+      const angle = waterfallAngle + angleOffset;
+
+      // Position along the normal edge radius (not pulled inward)
+      const radiusOffset = 0.88 + Math.random() * 0.1; // Standard edge radius
+      const x = Math.cos(angle) * islandRadius * radiusOffset;
+      const z = Math.sin(angle) * islandRadius * radiusOffset;
+
+      const terrainY = getHeightAt(x, z);
+
+      // Small rocks (0.3 to 0.6 height)
+      const rockScale = 0.3 + Math.random() * 0.3;
+      const rock = this.buildSimpleRock(rockScale * 2);
+
+      rock.position.set(
+        x + (Math.random() - 0.5) * 1.5,
+        terrainY + rockScale * 0.5,
+        z + (Math.random() - 0.5) * 1.5
+      );
+
+      rock.rotation.x = (Math.random() - 0.5) * 0.3;
+      rock.rotation.y = Math.random() * Math.PI * 2;
+      rock.rotation.z = (Math.random() - 0.5) * 0.3;
+
+      group.add(rock);
+    }
+
+    return group;
+  }
+
+  /**
+   * Build small pebble-like rocks in the portal exclusion zone
+   */
+  private buildPortalPebbleRocks(getHeightAt: (x: number, z: number) => number): THREE.Group {
+    const group = new THREE.Group();
+    const { islandRadius } = this.config;
+    const portalAngle = this.config.portalAngle ?? (Math.PI / 2);
+    const portalWidth = this.config.portalWidth ?? 0.35;
+
+    // Scatter small pebble rocks across the portal exclusion zone at edge radius
+    const rockCount = 12;
+    for (let i = 0; i < rockCount; i++) {
+      // Angle within portal exclusion zone
+      const angleOffset = (i / rockCount) * portalWidth - (portalWidth / 2);
+      const angle = portalAngle + angleOffset;
+
+      // Position along the edge radius
+      const radiusOffset = 0.88 + Math.random() * 0.1;
+      const x = Math.cos(angle) * islandRadius * radiusOffset;
+      const z = Math.sin(angle) * islandRadius * radiusOffset;
+
+      const terrainY = getHeightAt(x, z);
+
+      // Very small pebble-like rocks (0.2 to 0.4 height)
+      const pebbleScale = 0.2 + Math.random() * 0.2;
+      const pebble = this.buildSimpleRock(pebbleScale * 1.5);
+
+      pebble.position.set(
+        x + (Math.random() - 0.5) * 1,
+        terrainY + pebbleScale * 0.3,
+        z + (Math.random() - 0.5) * 1
+      );
+
+      pebble.rotation.x = (Math.random() - 0.5) * 0.4;
+      pebble.rotation.y = Math.random() * Math.PI * 2;
+      pebble.rotation.z = (Math.random() - 0.5) * 0.4;
+
+      group.add(pebble);
+    }
+
+    return group;
+  }
+
+  /**
+   * Check if an angle falls within an exclusion zone (portal or waterfall)
+   * Returns true if rocks should NOT render at this angle
+   */
+  private isInExclusionZone(angle: number): boolean {
+    const { waterfallAngle, waterfallWidth } = this.config;
+    const portalAngle = this.config.portalAngle ?? (Math.PI / 2);
+    const portalWidth = this.config.portalWidth ?? 0.18;
+
+    // Check waterfall exclusion zone
+    let waterfallDiff = Math.abs(angle - waterfallAngle);
+    waterfallDiff = Math.min(waterfallDiff, Math.PI * 2 - waterfallDiff);
+    if (waterfallDiff < waterfallWidth / 2) {
+      return true;
+    }
+
+    // Check portal exclusion zone
+    let portalDiff = Math.abs(angle - portalAngle);
+    portalDiff = Math.min(portalDiff, Math.PI * 2 - portalDiff);
+    if (portalDiff < portalWidth / 2) {
+      return true;
+    }
+
+    return false;
   }
 
   /**
