@@ -30,7 +30,7 @@ export const DEFAULT_ISLAND_EDGE_CONFIG: IslandEdgeConfig = {
   waterfallAngle: Math.PI * 0.75,
   waterfallWidth: 0.4,
   portalAngle: Math.PI / 2, // True south
-  portalWidth: 0.18, // ~5 units / 50 radius with margin
+  portalWidth: 0.35, // Larger zone to keep area behind portal clear
 };
 
 /**
@@ -57,6 +57,10 @@ export class IslandEdgeBuilder {
     // Build rim rocks that push up around the edge
     const rim = this.buildRimRocks(getHeightAt);
     group.add(rim);
+
+    // Build small decorative rocks at waterfall area (ground level)
+    const waterfallRocks = this.buildWaterfallFloorRocks(getHeightAt);
+    group.add(waterfallRocks);
 
     // Build floating crystal at bottom
     const crystal = this.buildFloatingCrystal();
@@ -306,6 +310,47 @@ export class IslandEdgeBuilder {
 
       group.add(rock);
     }
+  }
+
+  /**
+   * Build small decorative rocks at ground level around the waterfall area
+   */
+  private buildWaterfallFloorRocks(getHeightAt: (x: number, z: number) => number): THREE.Group {
+    const group = new THREE.Group();
+    const { islandRadius, waterfallAngle, waterfallWidth } = this.config;
+
+    // Scatter small rocks around the waterfall opening at ground level
+    const rockCount = 8;
+    for (let i = 0; i < rockCount; i++) {
+      // Angle around the waterfall area
+      const angleOffset = (i / rockCount) * waterfallWidth * 1.5 - (waterfallWidth * 0.75);
+      const angle = waterfallAngle + angleOffset;
+
+      // Position around the waterfall opening, slightly inward from edge
+      const radiusOffset = 0.70 + Math.random() * 0.15; // Closer to center
+      const x = Math.cos(angle) * islandRadius * radiusOffset;
+      const z = Math.sin(angle) * islandRadius * radiusOffset;
+
+      const terrainY = getHeightAt(x, z);
+
+      // Small rocks (0.3 to 0.6 height)
+      const rockScale = 0.3 + Math.random() * 0.3;
+      const rock = this.buildSimpleRock(rockScale * 2);
+
+      rock.position.set(
+        x + (Math.random() - 0.5) * 1.5,
+        terrainY + rockScale * 0.5,
+        z + (Math.random() - 0.5) * 1.5
+      );
+
+      rock.rotation.x = (Math.random() - 0.5) * 0.3;
+      rock.rotation.y = Math.random() * Math.PI * 2;
+      rock.rotation.z = (Math.random() - 0.5) * 0.3;
+
+      group.add(rock);
+    }
+
+    return group;
   }
 
   /**

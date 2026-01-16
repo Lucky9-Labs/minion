@@ -587,7 +587,7 @@ export function SimpleScene({
       waterfallAngle,
       waterfallWidth: 0.5,
       portalAngle: Math.PI / 2, // True south
-      portalWidth: 0.18, // ~5 units wide with margin
+      portalWidth: 0.35, // Larger zone to clear area behind portal
     });
     const islandEdge = islandEdgeBuilder.build((x, z) => terrainBuilder.getHeightAt(x, z));
     scene.add(islandEdge);
