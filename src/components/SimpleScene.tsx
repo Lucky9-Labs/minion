@@ -929,6 +929,17 @@ export function SimpleScene({
       onBuildingAesthetic: (buildingId) => {
         onProjectClick?.(buildingId);
       },
+      onBuildingMoveStart: (buildingId) => {
+        console.log('Building move started:', buildingId);
+      },
+      onBuildingMoveCommit: (buildingId, newPosition) => {
+        // Update store with new position
+        useProjectStore.getState().updateBuildingPosition(buildingId, newPosition);
+        console.log('Building moved:', buildingId, 'to', newPosition);
+      },
+      onBuildingMoveCancel: (buildingId) => {
+        console.log('Building move cancelled:', buildingId);
+      },
       onFoundationComplete: (foundation) => {
         onFoundationComplete?.(foundation);
       },
