@@ -4,6 +4,7 @@ import { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
+import { useGameStore } from '@/store/gameStore';
 
 interface ScaffoldWorkerProps {
   prNumber: number;
@@ -14,6 +15,7 @@ interface ScaffoldWorkerProps {
   buildingWidth: number;
   buildingDepth: number;
   projectId?: string;
+  minionId?: string; // Optional: if provided, render the actual minion instead of hardcoded goblin
 }
 
 // Goblin color palette (same as MinionEntity)
@@ -33,12 +35,20 @@ type WorkerPhase = 'walking' | 'hammering' | 'looking';
 // Worker minion on scaffolding with walk + hammer animation
 export function ScaffoldWorker({
   prNumber,
+  prTitle,
   floorIndex,
   baseHeight,
   floorHeight,
   buildingWidth,
   buildingDepth,
+  minionId,
 }: ScaffoldWorkerProps) {
+  // Get minion data from store if minionId is provided
+  const minions = useGameStore((state) => state.minions);
+  const minion = minionId ? minions.find((m) => m.id === minionId) : undefined;
+
+  // Label text: show minion name if available, otherwise just PR number
+  const labelText = minion ? `${minion.name} • PR #${prNumber}` : `PR #${prNumber}`;
   const groupRef = useRef<THREE.Group>(null);
   const rightArmRef = useRef<THREE.Group>(null);
   const leftArmRef = useRef<THREE.Group>(null);
@@ -340,7 +350,7 @@ export function ScaffoldWorker({
         </mesh>
       </group>
 
-      {/* PR info label on hover - shows PR number */}
+      {/* Info label - shows minion name (if available) and PR number */}
       <Html
         position={[0, 0.9, 0]}
         center
@@ -360,7 +370,7 @@ export function ScaffoldWorker({
             fontFamily: 'monospace',
           }}
         >
-          PR #{prNumber}
+          {labelText}
         </div>
       </Html>
     </group>

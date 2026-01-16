@@ -49,6 +49,14 @@ export interface CollisionDialogEntry {
   timestamp: number;
 }
 
+// Active PR assignment - tracks which minion is assigned to which PR
+export interface ActivePRAssignment {
+  prNumber: number;
+  minionId: string;
+  scaffoldFloor: number; // 0-based floor index on scaffolding
+  assignedAt: number; // timestamp
+}
+
 export interface Minion {
   id: string;
   name: string;
@@ -143,6 +151,7 @@ export interface GameState {
   artifacts: Artifact[];
   postcards: Postcard[];
   activeQuestId: string | null;
+  activeScaffoldingAssignments: ActivePRAssignment[]; // Track minion assignments to active PRs
 }
 
 // Minion role configurations

@@ -7,6 +7,8 @@ import { AnimatedDoor } from './AnimatedDoor';
 import { StoneWall, PitchedWoodRoof, CornerQuoin, STONE_COLORS, WOOD_COLORS } from './materials/StoneMaterial';
 import { Scaffolding } from './Scaffolding';
 import { ScaffoldWorker } from '../ScaffoldWorker';
+import { useActiveAssignments } from '@/hooks/useActiveAssignments';
+import { useGameStore } from '@/store/gameStore';
 
 interface CottageBuildingProps {
   stage: BuildingStage;
@@ -36,6 +38,9 @@ export function CottageBuilding({
   const totalHeight = baseHeight + Math.min(level - 1, 3) * floorHeight;
   const buildingWidth = 1.8;
   const buildingDepth = 1.8;
+
+  // Get active PR assignments with minion IDs
+  const { assignments } = useActiveAssignments({ projectId });
 
   const stageOpacity = {
     planning: 0.3,
@@ -352,19 +357,24 @@ export function CottageBuilding({
             floorHeight={2}
           />
           {/* Worker minions on scaffolding - one per open PR */}
-          {openPRs.map((pr, index) => (
-            <ScaffoldWorker
-              key={pr.number}
-              prNumber={pr.number}
-              prTitle={pr.title}
-              floorIndex={index}
-              baseHeight={totalHeight + 0.2}
-              floorHeight={2}
-              buildingWidth={buildingWidth}
-              buildingDepth={buildingDepth}
-              projectId={projectId}
-            />
-          ))}
+          {openPRs.map((pr, index) => {
+            // Find the minion assigned to this PR
+            const assignment = assignments.find((a) => a.prNumber === pr.number);
+            return (
+              <ScaffoldWorker
+                key={pr.number}
+                prNumber={pr.number}
+                prTitle={pr.title}
+                floorIndex={index}
+                baseHeight={totalHeight + 0.2}
+                floorHeight={2}
+                buildingWidth={buildingWidth}
+                buildingDepth={buildingDepth}
+                projectId={projectId}
+                minionId={assignment?.minionId} // Pass minion ID if available
+              />
+            );
+          })}
         </>
       )}
 
