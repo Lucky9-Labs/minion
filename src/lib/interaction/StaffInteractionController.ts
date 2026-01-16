@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { TargetingSystem } from './TargetingSystem';
 import { ForceGrabController } from './ForceGrabController';
 import { FoundationDrawer } from './FoundationDrawer';
+import { BuildingMoveController } from './BuildingMoveController';
+import { BuildingGhostPreview } from './BuildingGhostPreview';
 import { StaffBeam } from '../effects/StaffBeam';
 import type {
   InteractionMode,
@@ -30,6 +32,9 @@ interface StaffInteractionCallbacks {
   onBuildingStatus?: (buildingId: string) => void;
   onBuildingWorkers?: (buildingId: string) => void;
   onBuildingAesthetic?: (buildingId: string) => void;
+  onBuildingMoveStart?: (buildingId: string) => void;
+  onBuildingMoveCommit?: (buildingId: string, newPosition: { x: number; z: number }) => void;
+  onBuildingMoveCancel?: (buildingId: string) => void;
   onFoundationComplete?: (foundation: DrawnFoundation) => void;
   onModeChange?: (mode: InteractionMode) => void;
   onStaffStateChange?: (state: StaffState) => void;
@@ -40,6 +45,8 @@ export class StaffInteractionController {
   private targetingSystem: TargetingSystem;
   private forceGrabController: ForceGrabController;
   private foundationDrawer: FoundationDrawer;
+  private buildingMoveController: BuildingMoveController;
+  private buildingGhostPreview: BuildingGhostPreview;
   private staffBeam: StaffBeam;
 
   private camera: THREE.Camera;
@@ -92,10 +99,13 @@ export class StaffInteractionController {
       this.forceGrabController.setCamera(camera);
     }
     this.foundationDrawer = new FoundationDrawer();
+    this.buildingMoveController = new BuildingMoveController();
+    this.buildingGhostPreview = new BuildingGhostPreview();
     this.staffBeam = new StaffBeam();
 
     scene.add(this.staffBeam.getGroup());
     scene.add(this.foundationDrawer.getGroup());
+    scene.add(this.buildingGhostPreview.getGroup());
   }
 
   setCallbacks(callbacks: StaffInteractionCallbacks): void {
@@ -176,11 +186,13 @@ export class StaffInteractionController {
     // Clear any existing quick info
     this.hideQuickInfo();
 
-    // Right-click cancels drawing mode
+    // Right-click cancels drawing or moving mode
     if (event.button === 2) {
       if (this.state.mode === 'drawing') {
         this.foundationDrawer.cancelDrawing();
         this.setMode('idle');
+      } else if (this.state.mode === 'moving') {
+        this.cancel();
       }
       return;
     }
@@ -220,6 +232,14 @@ export class StaffInteractionController {
         // Handle grid cell selection
         const isShiftHeld = event.shiftKey;
         this.foundationDrawer.handleMouseDown(target.position, isShiftHeld);
+      }
+      return;
+    }
+
+    if (this.state.mode === 'moving') {
+      // Commit the building move on left click
+      if (this.buildingMoveController.isMoving()) {
+        this.commitBuildingMove();
       }
       return;
     }
@@ -329,7 +349,7 @@ export class StaffInteractionController {
     }
   }
 
-  // Keyboard handler for grid selection
+  // Keyboard handler for grid selection and building move
   handleKeyDown(event: KeyboardEvent): void {
     if (this.state.mode === 'drawing') {
       // Enter key to finalize selection
@@ -339,6 +359,12 @@ export class StaffInteractionController {
       }
       // Escape key to cancel
       else if (event.key === 'Escape') {
+        event.preventDefault();
+        this.cancel();
+      }
+    } else if (this.state.mode === 'moving') {
+      // Escape key to cancel building move
+      if (event.key === 'Escape') {
         event.preventDefault();
         this.cancel();
       }
@@ -382,12 +408,35 @@ export class StaffInteractionController {
       }
     }
 
+    // Update building move
+    if (this.state.mode === 'moving' || this.buildingMoveController.isActive()) {
+      // Update targeting to get ground position
+      const target = this.targetingSystem.update();
+
+      if (target && target.type === 'ground' && this.buildingMoveController.isMoving()) {
+        // Update target position for placement
+        this.buildingMoveController.updateTargetPosition(target.position);
+
+        // Update ghost preview position
+        const targetPos = this.buildingMoveController.getTargetPosition();
+        if (targetPos) {
+          this.buildingGhostPreview.setPosition(targetPos.x, targetPos.z);
+        }
+
+        // Update localized grid
+        this.foundationDrawer.updateMoveGrid(target.position);
+      }
+
+      // Update move controller animation
+      this.buildingMoveController.update(deltaTime);
+    }
+
     // Update beam for aiming
     if (this.state.mode === 'aiming' && this.state.target) {
       const staffPos = this.getStaffGemPosition();
       this.staffBeam.setEndpoints(staffPos, this.state.target.position);
       this.staffBeam.setVisible(true);
-    } else if (this.state.mode !== 'grabbing' && this.state.mode !== 'drawing') {
+    } else if (this.state.mode !== 'grabbing' && this.state.mode !== 'drawing' && this.state.mode !== 'moving') {
       this.staffBeam.setVisible(false);
     }
 
@@ -420,6 +469,11 @@ export class StaffInteractionController {
         this.callbacks.onStaffStateChange?.('grabbing');
         break;
       case 'drawing':
+        this.staffBeam.setMode('drawing');
+        this.staffBeam.setVisible(true);
+        this.callbacks.onStaffStateChange?.('drawing');
+        break;
+      case 'moving':
         this.staffBeam.setMode('drawing');
         this.staffBeam.setVisible(true);
         this.callbacks.onStaffStateChange?.('drawing');
@@ -514,6 +568,13 @@ export class StaffInteractionController {
         }
         break;
 
+      case 'move':
+        if (target?.type === 'building' && target.id && target.mesh) {
+          this.startBuildingMove(target.id, target.mesh);
+          return; // Don't set to idle
+        }
+        break;
+
       case 'build':
         if (target?.type === 'ground') {
           this.foundationDrawer.startDrawing(target.position);
@@ -544,12 +605,70 @@ export class StaffInteractionController {
     }
   }
 
+  /**
+   * Start moving a building
+   */
+  private startBuildingMove(buildingId: string, buildingMesh: THREE.Object3D): void {
+    // Set up callbacks for move completion
+    this.buildingMoveController.setOnCommit((id, newPosition) => {
+      this.buildingGhostPreview.hide();
+      this.foundationDrawer.exitMoveMode();
+      this.callbacks.onBuildingMoveCommit?.(id, newPosition);
+      this.setMode('idle');
+    });
+
+    this.buildingMoveController.setOnCancel((id) => {
+      this.buildingGhostPreview.hide();
+      this.foundationDrawer.exitMoveMode();
+      this.callbacks.onBuildingMoveCancel?.(id);
+      this.setMode('idle');
+    });
+
+    // Start the move
+    this.buildingMoveController.startMove(buildingId, buildingMesh);
+
+    // Set up ghost preview with building footprint
+    const footprint = this.buildingMoveController.getFootprint();
+    if (footprint) {
+      this.buildingGhostPreview.setFootprint(footprint.width, footprint.depth);
+      const originalPos = this.buildingMoveController.getOriginalPosition();
+      if (originalPos) {
+        this.buildingGhostPreview.setPosition(originalPos.x, originalPos.z);
+      }
+      this.buildingGhostPreview.show();
+    }
+
+    // Enter move mode on foundation drawer (localized grid)
+    const originalPos = this.buildingMoveController.getOriginalPosition();
+    if (originalPos) {
+      this.foundationDrawer.enterMoveMode(originalPos);
+    }
+
+    // Fire callback
+    this.callbacks.onBuildingMoveStart?.(buildingId);
+
+    this.setMode('moving');
+  }
+
+  /**
+   * Commit building move (place at current target)
+   */
+  commitBuildingMove(): void {
+    if (this.state.mode === 'moving' && this.buildingMoveController.isMoving()) {
+      this.buildingMoveController.commit();
+    }
+  }
+
   // Cancel current interaction
   cancel(): void {
     if (this.state.mode === 'grabbing') {
       this.forceGrabController.cancel();
     } else if (this.state.mode === 'drawing') {
       this.foundationDrawer.cancelDrawing();
+    } else if (this.state.mode === 'moving') {
+      this.buildingMoveController.cancel();
+      this.buildingGhostPreview.hide();
+      this.foundationDrawer.exitMoveMode();
     }
 
     this.hideQuickInfo();
@@ -619,6 +738,14 @@ export class StaffInteractionController {
     return this.foundationDrawer.canComplete();
   }
 
+  isMovingBuilding(): boolean {
+    return this.buildingMoveController.isActive();
+  }
+
+  getMovingBuildingId(): string | null {
+    return this.buildingMoveController.getBuildingId();
+  }
+
   // Suspend entity (for menu hover state - they float and spin)
   private suspendEntity(entityId: string, mesh: THREE.Object3D): void {
     this.suspendedEntityId = entityId;
@@ -656,6 +783,8 @@ export class StaffInteractionController {
     this.targetingSystem.dispose();
     this.forceGrabController.dispose();
     this.foundationDrawer.dispose();
+    this.buildingMoveController.dispose();
+    this.buildingGhostPreview.dispose();
     this.staffBeam.dispose();
   }
 }
