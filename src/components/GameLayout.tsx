@@ -19,6 +19,7 @@ import { wowTheme } from '@/styles/theme';
 import { initSoundSettings, preloadSounds, playSound } from '@/lib/sounds';
 import { useProjectPolling } from '@/hooks/useProjectPolling';
 import type { InteractionMode, MenuOption, Target, DrawnFoundation } from '@/types/interaction';
+import type { SpellbookPage } from '@/lib/FirstPersonSpellbook';
 
 type ActivePanel = 'minions' | 'quests' | 'vault' | null;
 
@@ -38,6 +39,11 @@ export function GameLayout() {
   const [selectionDelta, setSelectionDelta] = useState({ x: 0, y: 0 });
   const [interactionTarget, setInteractionTarget] = useState<Target | null>(null);
   const [menuScreenPosition, setMenuScreenPosition] = useState<{ x: number; y: number } | null>(null);
+
+  // Spellbook state for first person entity selection
+  const [spellbookSelection, setSpellbookSelection] = useState<SpellbookPage | null>(null);
+  const [spellbookPageIndex, setSpellbookPageIndex] = useState(0);
+  const [spellbookPageCount, setSpellbookPageCount] = useState(0);
 
   // Ref to store interaction controller execute function
   const interactionExecuteRef = useRef<((actionId: string) => void) | null>(null);
@@ -106,6 +112,11 @@ export function GameLayout() {
           }}
           onInteractionControllerReady={(executeAction) => {
             interactionExecuteRef.current = executeAction;
+          }}
+          onSpellbookSelectionChange={(selection, pageIndex, pageCount) => {
+            setSpellbookSelection(selection);
+            setSpellbookPageIndex(pageIndex);
+            setSpellbookPageCount(pageCount);
           }}
         />
       </div>
@@ -415,7 +426,12 @@ export function GameLayout() {
       <ConversationPanel />
 
       {/* First person mode HUD */}
-      <FirstPersonHUD visible={inFirstPerson} />
+      <FirstPersonHUD
+        visible={inFirstPerson}
+        spellbookSelection={spellbookSelection}
+        spellbookPageIndex={spellbookPageIndex}
+        spellbookPageCount={spellbookPageCount}
+      />
 
       {/* Interaction HUD (radial menu, quick info) for first person and isometric */}
       <InteractionHUD
