@@ -62,6 +62,10 @@ export class IslandEdgeBuilder {
     const waterfallRocks = this.buildWaterfallFloorRocks(getHeightAt);
     group.add(waterfallRocks);
 
+    // Build small pebble-like rocks in portal exclusion zone
+    const portalPebbles = this.buildPortalPebbleRocks(getHeightAt);
+    group.add(portalPebbles);
+
     // Build floating crystal at bottom
     const crystal = this.buildFloatingCrystal();
     group.add(crystal);
@@ -319,15 +323,15 @@ export class IslandEdgeBuilder {
     const group = new THREE.Group();
     const { islandRadius, waterfallAngle, waterfallWidth } = this.config;
 
-    // Scatter small rocks around the waterfall opening at ground level
+    // Scatter small rocks around the waterfall opening at edge radius
     const rockCount = 8;
     for (let i = 0; i < rockCount; i++) {
       // Angle around the waterfall area
       const angleOffset = (i / rockCount) * waterfallWidth * 1.5 - (waterfallWidth * 0.75);
       const angle = waterfallAngle + angleOffset;
 
-      // Position around the waterfall opening, slightly inward from edge
-      const radiusOffset = 0.70 + Math.random() * 0.15; // Closer to center
+      // Position along the normal edge radius (not pulled inward)
+      const radiusOffset = 0.88 + Math.random() * 0.1; // Standard edge radius
       const x = Math.cos(angle) * islandRadius * radiusOffset;
       const z = Math.sin(angle) * islandRadius * radiusOffset;
 
@@ -348,6 +352,49 @@ export class IslandEdgeBuilder {
       rock.rotation.z = (Math.random() - 0.5) * 0.3;
 
       group.add(rock);
+    }
+
+    return group;
+  }
+
+  /**
+   * Build small pebble-like rocks in the portal exclusion zone
+   */
+  private buildPortalPebbleRocks(getHeightAt: (x: number, z: number) => number): THREE.Group {
+    const group = new THREE.Group();
+    const { islandRadius } = this.config;
+    const portalAngle = this.config.portalAngle ?? (Math.PI / 2);
+    const portalWidth = this.config.portalWidth ?? 0.35;
+
+    // Scatter small pebble rocks across the portal exclusion zone at edge radius
+    const rockCount = 12;
+    for (let i = 0; i < rockCount; i++) {
+      // Angle within portal exclusion zone
+      const angleOffset = (i / rockCount) * portalWidth - (portalWidth / 2);
+      const angle = portalAngle + angleOffset;
+
+      // Position along the edge radius
+      const radiusOffset = 0.88 + Math.random() * 0.1;
+      const x = Math.cos(angle) * islandRadius * radiusOffset;
+      const z = Math.sin(angle) * islandRadius * radiusOffset;
+
+      const terrainY = getHeightAt(x, z);
+
+      // Very small pebble-like rocks (0.2 to 0.4 height)
+      const pebbleScale = 0.2 + Math.random() * 0.2;
+      const pebble = this.buildSimpleRock(pebbleScale * 1.5);
+
+      pebble.position.set(
+        x + (Math.random() - 0.5) * 1,
+        terrainY + pebbleScale * 0.3,
+        z + (Math.random() - 0.5) * 1
+      );
+
+      pebble.rotation.x = (Math.random() - 0.5) * 0.4;
+      pebble.rotation.y = Math.random() * Math.PI * 2;
+      pebble.rotation.z = (Math.random() - 0.5) * 0.4;
+
+      group.add(pebble);
     }
 
     return group;
