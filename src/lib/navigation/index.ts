@@ -26,3 +26,14 @@ export {
 // Elevated Pathfinder
 export type { ElevatedPath } from './ElevatedPathfinder';
 export { ElevatedPathfinder } from './ElevatedPathfinder';
+
+// Path Follower (for minion pathing to scaffolding)
+export type { PathFollowState } from './PathFollower';
+export {
+  createPathFollowState,
+  updatePathFollow,
+  getCurrentWaypoint,
+  getFinalDestination,
+  isNearTarget,
+  moveTowardTarget,
+} from './PathFollower';

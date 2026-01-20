@@ -35,6 +35,18 @@ export interface BuildingAssignment {
   prNumber: number;
   scaffoldPosition: { x: number; y: number; z: number }; // Position on scaffolding
   isActive: boolean;
+  instructions?: string; // User-provided instructions for what to work on
+  assignedAt?: number; // Timestamp when assignment was created
+}
+
+// Collision dialog entry for when a minion is thrown at a building
+export interface CollisionDialogEntry {
+  minionId: string;
+  projectId: string;
+  buildingId: string;
+  landingPosition: { x: number; y: number; z: number };
+  buildingPosition: { x: number; y: number; z: number };
+  timestamp: number;
 }
 
 export interface Minion {

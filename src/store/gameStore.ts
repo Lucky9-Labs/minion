@@ -19,6 +19,7 @@ import type {
   BuildingAssignment,
   Golem,
   GolemState,
+  CollisionDialogEntry,
 } from '@/types/game';
 
 function generateId(): string {
@@ -33,9 +34,18 @@ interface GameStore extends GameState {
   updateMinionPositionsBatch: (positions: Map<string, { x: number; y: number; z: number }>) => void;
 
   // Building assignment actions
-  assignMinionToBuilding: (minionId: string, projectId: string, prNumber: number, scaffoldPosition: { x: number; y: number; z: number }) => void;
+  assignMinionToBuilding: (minionId: string, projectId: string, prNumber: number, scaffoldPosition: { x: number; y: number; z: number }, instructions?: string) => void;
+  assignMinionToBuildingWithPath: (minionId: string, projectId: string, buildingPosition: { x: number; y: number; z: number }, instructions: string) => void;
   unassignMinionFromBuilding: (minionId: string) => void;
   getMinionsForProject: (projectId: string) => Minion[];
+
+  // Collision dialog queue actions
+  collisionDialogQueue: CollisionDialogEntry[];
+  queueCollisionDialog: (entry: Omit<CollisionDialogEntry, 'timestamp'>) => void;
+  dequeueCollisionDialog: () => CollisionDialogEntry | null;
+  peekCollisionDialog: () => CollisionDialogEntry | null;
+  clearCollisionDialogForMinion: (minionId: string) => void;
+  dismissCollisionDialog: (minionId: string) => void;
 
   // Golem actions
   addGolem: (name: string) => Golem;
@@ -169,6 +179,7 @@ export const useGameStore = create<GameStore>()(
       cameraMode: 'isometric' as const,
       viewMode: 'isometric' as const,
       loadedInteriors: [] as string[],
+      collisionDialogQueue: [] as CollisionDialogEntry[],
 
       recruitMinion: (name, role, traits) => {
         const minion: Minion = {
@@ -215,7 +226,7 @@ export const useGameStore = create<GameStore>()(
       },
 
       // Building assignment actions
-      assignMinionToBuilding: (minionId, projectId, prNumber, scaffoldPosition) => {
+      assignMinionToBuilding: (minionId, projectId, prNumber, scaffoldPosition, instructions) => {
         set((state) => ({
           minions: state.minions.map((m) =>
             m.id === minionId
@@ -227,6 +238,34 @@ export const useGameStore = create<GameStore>()(
                     prNumber,
                     scaffoldPosition,
                     isActive: true,
+                    instructions,
+                    assignedAt: Date.now(),
+                  },
+                }
+              : m
+          ),
+        }));
+      },
+
+      // Assign minion to building and start pathing (for collision-triggered assignments)
+      assignMinionToBuildingWithPath: (minionId, projectId, buildingPosition, instructions) => {
+        set((state) => ({
+          minions: state.minions.map((m) =>
+            m.id === minionId
+              ? {
+                  ...m,
+                  state: 'traveling' as MinionState, // Start in traveling to path to building
+                  buildingAssignment: {
+                    projectId,
+                    prNumber: 0, // Will be assigned to scaffolding, not a specific PR
+                    scaffoldPosition: {
+                      x: buildingPosition.x,
+                      y: buildingPosition.y + 2.5, // First scaffold level
+                      z: buildingPosition.z - 2.5, // Front platform
+                    },
+                    isActive: true,
+                    instructions,
+                    assignedAt: Date.now(),
                   },
                 }
               : m
@@ -252,6 +291,49 @@ export const useGameStore = create<GameStore>()(
         return get().minions.filter(
           (m) => m.buildingAssignment?.projectId === projectId && m.buildingAssignment?.isActive
         );
+      },
+
+      // Collision dialog queue actions
+      queueCollisionDialog: (entry) => {
+        set((state) => ({
+          collisionDialogQueue: [
+            ...state.collisionDialogQueue,
+            { ...entry, timestamp: Date.now() },
+          ],
+        }));
+      },
+
+      dequeueCollisionDialog: () => {
+        const state = get();
+        if (state.collisionDialogQueue.length === 0) return null;
+        const [first, ...rest] = state.collisionDialogQueue;
+        set({ collisionDialogQueue: rest });
+        return first;
+      },
+
+      peekCollisionDialog: () => {
+        const state = get();
+        return state.collisionDialogQueue.length > 0 ? state.collisionDialogQueue[0] : null;
+      },
+
+      clearCollisionDialogForMinion: (minionId) => {
+        set((state) => ({
+          collisionDialogQueue: state.collisionDialogQueue.filter(
+            (entry) => entry.minionId !== minionId
+          ),
+        }));
+      },
+
+      dismissCollisionDialog: (minionId) => {
+        // Remove from queue and return minion to idle
+        set((state) => ({
+          collisionDialogQueue: state.collisionDialogQueue.filter(
+            (entry) => entry.minionId !== minionId
+          ),
+          minions: state.minions.map((m) =>
+            m.id === minionId ? { ...m, state: 'idle' as MinionState } : m
+          ),
+        }));
       },
 
       // Golem actions
@@ -617,7 +699,7 @@ export const useGameStore = create<GameStore>()(
       },
 
       resetGame: () => {
-        set({ ...initialState, selectedMinionId: null, selectedGolemId: null, possessedGolemId: null, conversation: initialConversationState, cameraMode: 'isometric', viewMode: 'isometric', loadedInteriors: [] });
+        set({ ...initialState, selectedMinionId: null, selectedGolemId: null, possessedGolemId: null, conversation: initialConversationState, cameraMode: 'isometric', viewMode: 'isometric', loadedInteriors: [], collisionDialogQueue: [] });
       },
     }),
     {
@@ -640,6 +722,8 @@ export const useGameStore = create<GameStore>()(
         }
         // Reset possession state on reload
         merged.possessedGolemId = null;
+        // Clear collision dialog queue on reload (stale state)
+        merged.collisionDialogQueue = [];
         return merged;
       },
       onRehydrateStorage: () => {
