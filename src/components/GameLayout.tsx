@@ -19,6 +19,7 @@ import { WowIcon } from './ui/WowIcon';
 import { wowTheme } from '@/styles/theme';
 import { initSoundSettings, preloadSounds, playSound } from '@/lib/sounds';
 import { useProjectPolling } from '@/hooks/useProjectPolling';
+import { useActiveAssignments } from '@/hooks/useActiveAssignments';
 import type { InteractionMode, MenuOption, Target, DrawnFoundation } from '@/types/interaction';
 import type { SpellbookPage } from '@/lib/FirstPersonSpellbook';
 
@@ -65,6 +66,12 @@ export function GameLayout() {
 
   // Poll for project/PR changes every 30 seconds
   useProjectPolling(30000);
+
+  // Sync minion assignments with active PRs (handles lifecycle and periodic polling)
+  useActiveAssignments({
+    pollingIntervalMs: 30000, // Check for PR changes every 30 seconds
+    autoSync: true, // Auto sync on mount and with polling
+  });
 
   const togglePanel = (panel: ActivePanel) => {
     if (activePanel === panel) {

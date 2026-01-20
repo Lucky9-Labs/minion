@@ -17,6 +17,7 @@ import type {
   ConversationPhase,
   Wizard,
   BuildingAssignment,
+  ActivePRAssignment,
   Golem,
   GolemState,
   CollisionDialogEntry,
@@ -46,6 +47,13 @@ interface GameStore extends GameState {
   peekCollisionDialog: () => CollisionDialogEntry | null;
   clearCollisionDialogForMinion: (minionId: string) => void;
   dismissCollisionDialog: (minionId: string) => void;
+
+  // Scaffolding assignment actions (PR-based minion assignments)
+  getIdleMinions: () => Minion[]; // Minions not assigned to scaffolding
+  assignMinionsToScaffolding: (activePRNumbers: number[], projectId: string) => void; // Reuse idle minions, create if needed
+  syncActiveAssignments: (activePRNumbers: number[]) => void; // Sync with current active PRs
+  unassignMinionFromScaffolding: (minionId: string) => void; // Unassign and return to idle
+  getScaffoldingAssignments: () => ActivePRAssignment[]; // Get current assignments
 
   // Golem actions
   addGolem: (name: string) => Golem;
@@ -156,6 +164,7 @@ const initialState: GameState = {
   artifacts: [],
   postcards: [],
   activeQuestId: null,
+  activeScaffoldingAssignments: [],
 };
 
 const initialConversationState: ConversationState = {
@@ -405,6 +414,184 @@ export const useGameStore = create<GameStore>()(
         }
       },
 
+      // Scaffolding assignment actions for PR-based minion work
+      getIdleMinions: () => {
+        const state = get();
+        // Idle = minion with no active scaffolding assignment
+        return state.minions.filter(
+          (m) => !state.activeScaffoldingAssignments.some((a) => a.minionId === m.id)
+        );
+      },
+
+      getScaffoldingAssignments: () => {
+        return get().activeScaffoldingAssignments;
+      },
+
+      assignMinionsToScaffolding: (activePRNumbers, projectId) => {
+        set((state) => {
+          const idleMinions = state.minions.filter(
+            (m) => !state.activeScaffoldingAssignments.some((a) => a.minionId === m.id)
+          );
+
+          const newAssignments: ActivePRAssignment[] = [];
+          const updatedMinions = [...state.minions];
+          let minionCounter = state.minions.length; // For generating new minion IDs
+
+          // Step 1: Reuse idle minions first
+          for (let floor = 0; floor < activePRNumbers.length; floor++) {
+            const prNumber = activePRNumbers[floor];
+
+            if (floor < idleMinions.length) {
+              // Reuse idle minion
+              const minion = idleMinions[floor];
+              newAssignments.push({
+                prNumber,
+                minionId: minion.id,
+                scaffoldFloor: floor,
+                assignedAt: Date.now(),
+              });
+
+              // Update minion state to working
+              const minionIndex = updatedMinions.findIndex((m) => m.id === minion.id);
+              if (minionIndex >= 0) {
+                updatedMinions[minionIndex] = {
+                  ...updatedMinions[minionIndex],
+                  state: 'working' as MinionState,
+                };
+              }
+            } else {
+              // Step 2: Create new minion only if we don't have enough idle ones
+              const newMinionId = generateId();
+              const newMinion: Minion = {
+                id: newMinionId,
+                name: `Artificer ${minionCounter - state.minions.length + 1}`,
+                role: 'artificer',
+                traits: ['methodical'],
+                state: 'working',
+                memories: [],
+                position: { x: 0, y: 0, z: 0 },
+                skinId: 'default',
+                currentQuestId: null,
+                createdAt: Date.now(),
+              };
+
+              updatedMinions.push(newMinion);
+              newAssignments.push({
+                prNumber,
+                minionId: newMinionId,
+                scaffoldFloor: floor,
+                assignedAt: Date.now(),
+              });
+            }
+          }
+
+          return {
+            minions: updatedMinions,
+            activeScaffoldingAssignments: newAssignments,
+          };
+        });
+      },
+
+      syncActiveAssignments: (activePRNumbers) => {
+        set((state) => {
+          // Remove assignments for PRs that are no longer active
+          const activePRSet = new Set(activePRNumbers);
+          const closedAssignments = state.activeScaffoldingAssignments.filter(
+            (a) => !activePRSet.has(a.prNumber)
+          );
+          const stillActiveAssignments = state.activeScaffoldingAssignments.filter(
+            (a) => activePRSet.has(a.prNumber)
+          );
+
+          // Return closed minions to idle state
+          const minionsToIdleIds = new Set(closedAssignments.map((a) => a.minionId));
+          const updatedMinions = state.minions.map((m) =>
+            minionsToIdleIds.has(m.id) ? { ...m, state: 'idle' as MinionState } : m
+          );
+
+          // If new PRs are active, assign minions to them
+          if (activePRNumbers.length > stillActiveAssignments.length) {
+            // Need to assign minions to new PRs
+            const newPRNumbers = activePRNumbers.filter(
+              (prNum) => !stillActiveAssignments.some((a) => a.prNumber === prNum)
+            );
+
+            const idleMinions = updatedMinions.filter(
+              (m) => !stillActiveAssignments.some((a) => a.minionId === m.id) && !m.buildingAssignment
+            );
+
+            const newAssignments: ActivePRAssignment[] = [...stillActiveAssignments];
+            let floor = stillActiveAssignments.length;
+
+            // Reuse idle minions for new PRs
+            for (let i = 0; i < newPRNumbers.length; i++) {
+              const prNumber = newPRNumbers[i];
+
+              if (i < idleMinions.length) {
+                const minion = idleMinions[i];
+                newAssignments.push({
+                  prNumber,
+                  minionId: minion.id,
+                  scaffoldFloor: floor,
+                  assignedAt: Date.now(),
+                });
+
+                const minionIndex = updatedMinions.findIndex((m) => m.id === minion.id);
+                if (minionIndex >= 0) {
+                  updatedMinions[minionIndex] = {
+                    ...updatedMinions[minionIndex],
+                    state: 'working' as MinionState,
+                  };
+                }
+              } else {
+                // Create new minion if no idle ones available
+                const newMinionId = generateId();
+                const newMinion: Minion = {
+                  id: newMinionId,
+                  name: `Artificer ${updatedMinions.length + 1}`,
+                  role: 'artificer',
+                  traits: ['methodical'],
+                  state: 'working',
+                  memories: [],
+                  position: { x: 0, y: 0, z: 0 },
+                  skinId: 'default',
+                  currentQuestId: null,
+                  createdAt: Date.now(),
+                };
+                updatedMinions.push(newMinion);
+                newAssignments.push({
+                  prNumber,
+                  minionId: newMinionId,
+                  scaffoldFloor: floor,
+                  assignedAt: Date.now(),
+                });
+              }
+              floor++;
+            }
+
+            return {
+              minions: updatedMinions,
+              activeScaffoldingAssignments: newAssignments,
+            };
+          }
+
+          return {
+            minions: updatedMinions,
+            activeScaffoldingAssignments: stillActiveAssignments,
+          };
+        });
+      },
+
+      unassignMinionFromScaffolding: (minionId) => {
+        set((state) => ({
+          minions: state.minions.map((m) =>
+            m.id === minionId ? { ...m, state: 'idle' as MinionState } : m
+          ),
+          activeScaffoldingAssignments: state.activeScaffoldingAssignments.filter(
+            (a) => a.minionId !== minionId
+          ),
+        }));
+      },
       createQuest: (title, description, minionId) => {
         const quest: Quest = {
           id: generateId(),
