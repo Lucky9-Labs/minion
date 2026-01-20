@@ -29,7 +29,7 @@ import { FirstPersonHands } from '@/lib/FirstPersonHands';
 import { GolemFirstPersonHands } from '@/lib/GolemFirstPersonHands';
 import { GolemCameraController } from '@/lib/camera';
 import { createGolem, updateGolemAnimation, type GolemInstance } from '@/lib/golem';
-import { StaffInteractionController } from '@/lib/interaction';
+import { StaffInteractionController, ThrownMinionCollisionDetector } from '@/lib/interaction';
 import type { ThrownEntity } from '@/lib/interaction/StaffInteractionController';
 import type { InteractionMode, MenuOption, DrawnFoundation } from '@/types/interaction';
 import { vec3Pool, resetAllPools } from '@/lib/vectorPool';
@@ -205,6 +205,7 @@ export function SimpleScene({
   const outlineEffectRef = useRef<OutlineEffect | null>(null);
   const lastDeltaUpdateRef = useRef<number>(0);
   const thrownMinionsRef = useRef<Map<string, ThrownMinionState>>(new Map());
+  const collisionDetectorRef = useRef<ThrownMinionCollisionDetector | null>(null);
   // Isometric mode interaction tracking
   const isometricHoldStartRef = useRef<number | null>(null);
   const isometricMousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -233,6 +234,8 @@ export function SimpleScene({
   possessedGolemIdRef.current = possessedGolemId;
   const possessGolem = useGameStore((state) => state.possessGolem);
   const addGolem = useGameStore((state) => state.addGolem);
+  const queueCollisionDialog = useGameStore((state) => state.queueCollisionDialog);
+  const updateMinionState = useGameStore((state) => state.updateMinionState);
 
   // Project store
   const { projects, scanProjects } = useProjectStore();
@@ -1817,6 +1820,13 @@ export function SimpleScene({
         const MAX_BOUNCES = 4;
         const worldLimit = WORLD_HALF_SIZE * 0.95;
 
+        // Initialize or update collision detector if needed
+        if (!collisionDetectorRef.current) {
+          collisionDetectorRef.current = new ThrownMinionCollisionDetector(projectBuildingsRef.current);
+        } else {
+          collisionDetectorRef.current.updateBuildingsRef(projectBuildingsRef.current);
+        }
+
         thrownMinionsRef.current.forEach((thrown, minionId) => {
           const minionData = minionsRef.current.get(minionId);
           if (!minionData) {
@@ -1829,6 +1839,49 @@ export function SimpleScene({
           minionData.currentPosition.x += thrown.velocity.x * deltaTime;
           minionData.currentPosition.y += thrown.velocity.y * deltaTime;
           minionData.currentPosition.z += thrown.velocity.z * deltaTime;
+
+          // Check for collision with project buildings (before ground collision)
+          if (collisionDetectorRef.current && projectBuildingsRef.current.size > 0) {
+            const collision = collisionDetectorRef.current.checkCollision(
+              minionData.currentPosition,
+              thrown.velocity,
+              deltaTime
+            );
+
+            if (collision.hit && collision.projectId && collision.buildingPosition) {
+              // Collision detected! Stop throw and queue dialog
+              const groundY = getGroundHeight(minionData.currentPosition.x, minionData.currentPosition.z);
+              minionData.currentPosition.y = groundY;
+              minionData.instance.mesh.position.copy(minionData.currentPosition);
+              minionData.instance.mesh.rotation.set(0, minionData.instance.mesh.rotation.y, 0);
+              minionData.isMoving = false;
+
+              // Queue the collision dialog
+              const store = useGameStore.getState();
+              store.queueCollisionDialog({
+                minionId,
+                projectId: collision.projectId,
+                buildingId: collision.buildingId || collision.projectId,
+                landingPosition: {
+                  x: minionData.currentPosition.x,
+                  y: minionData.currentPosition.y,
+                  z: minionData.currentPosition.z,
+                },
+                buildingPosition: {
+                  x: collision.buildingPosition.x,
+                  y: collision.buildingPosition.y,
+                  z: collision.buildingPosition.z,
+                },
+              });
+
+              // Set minion to conversing state while waiting for instructions
+              store.updateMinionState(minionId, 'conversing');
+
+              // Remove from thrown minions
+              thrownMinionsRef.current.delete(minionId);
+              return;
+            }
+          }
 
           // Get ground height
           const groundY = getGroundHeight(minionData.currentPosition.x, minionData.currentPosition.z);
@@ -1988,6 +2041,82 @@ export function SimpleScene({
             data.currentPosition.z
           );
           return; // Skip normal movement logic
+        }
+
+        // Handle minions traveling TO scaffolding (collision-triggered assignments)
+        const currentMinions = minionsDataRef.current;
+        const minionStoreData = currentMinions.find(m => m.id === data.minionId);
+        if (minionStoreData?.buildingAssignment?.isActive &&
+            minionStoreData.state === 'traveling' &&
+            !data.isOnScaffolding) {
+          const assignment = minionStoreData.buildingAssignment;
+          const scaffoldTarget = new THREE.Vector3(
+            assignment.scaffoldPosition.x,
+            getGroundHeight(assignment.scaffoldPosition.x, assignment.scaffoldPosition.z),
+            assignment.scaffoldPosition.z
+          );
+
+          // Move toward scaffold entry point
+          const direction = scaffoldTarget.clone().sub(data.currentPosition);
+          const distance = direction.length();
+          const moveSpeed = data.speed * 1.2; // Slightly faster when on task
+
+          if (distance < 1.0) {
+            // Arrived at scaffolding! Transition to working state
+            data.currentPosition.set(
+              assignment.scaffoldPosition.x,
+              assignment.scaffoldPosition.y,
+              assignment.scaffoldPosition.z
+            );
+            data.isOnScaffolding = true;
+            data.scaffoldIsWorking = false;
+            data.scaffoldWorkTimer = 2.0 + Math.random() * 3.0;
+
+            // Initialize elevated navigation point
+            const surface = elevatedSurfaceRegistryRef.current.getSurfaceAt(
+              assignment.scaffoldPosition.x,
+              assignment.scaffoldPosition.z,
+              assignment.scaffoldPosition.y,
+              1.0
+            );
+            data.elevatedCurrentPoint = {
+              x: assignment.scaffoldPosition.x,
+              z: assignment.scaffoldPosition.z,
+              y: assignment.scaffoldPosition.y,
+              surfaceId: surface?.id || null,
+              isStair: false,
+            };
+
+            // Equip hard hat
+            data.instance.equipGear(hardHatConfig);
+
+            // Update store state to 'working'
+            const store = useGameStore.getState();
+            store.updateMinionState(data.minionId, 'working');
+          } else {
+            // Move toward scaffolding
+            direction.normalize();
+            const moveDistance = Math.min(moveSpeed * deltaTime, distance);
+            data.currentPosition.x += direction.x * moveDistance;
+            data.currentPosition.z += direction.z * moveDistance;
+            data.currentPosition.y = getGroundHeight(data.currentPosition.x, data.currentPosition.z);
+
+            // Face direction of movement
+            data.instance.mesh.rotation.y = Math.atan2(direction.x, direction.z);
+
+            // Walking animation
+            data.instance.animator.update(deltaTime, elapsedTime, true);
+          }
+
+          // Update mesh position
+          const bounce = data.instance.animator.getBounce();
+          data.instance.mesh.position.set(
+            data.currentPosition.x,
+            data.currentPosition.y + bounce,
+            data.currentPosition.z
+          );
+
+          return; // Skip normal movement
         }
 
         // Handle scaffolding workers - walk around and periodically work
@@ -2459,7 +2588,8 @@ export function SimpleScene({
         const personality = personalities[index % personalities.length];
 
         // Check if minion has building assignment (working on scaffolding)
-        const isOnScaffolding = !!minion.buildingAssignment?.isActive;
+        // Only consider "on scaffolding" if actively working (not traveling to it)
+        const isOnScaffolding = !!minion.buildingAssignment?.isActive && minion.state === 'working';
 
         // If on scaffolding, position at scaffold position and equip hard hat
         let initialElevatedPoint: ElevatedNavPoint | null = null;

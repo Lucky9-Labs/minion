@@ -7,6 +7,7 @@ import { QuestPanel } from './ui/QuestPanel';
 import { VaultPanel } from './ui/VaultPanel';
 import { CharacterPanel } from './ui/CharacterPanel';
 import { ConversationPanel } from './ui/ConversationPanel';
+import { CollisionInstructionDialog } from './ui/CollisionInstructionDialog';
 import { WizardProfileFrame } from './ui/WizardProfileFrame';
 import { TargetFrame } from './ui/TargetFrame';
 import { FirstPersonHUD } from './ui/FirstPersonHUD';
@@ -437,6 +438,9 @@ export function GameLayout() {
 
       {/* Conversation panel (shown during minion conversation) */}
       <ConversationPanel />
+
+      {/* Collision instruction dialog (shown when minion thrown at building) */}
+      <CollisionInstructionDialog />
 
       {/* First person mode HUD */}
       <FirstPersonHUD
